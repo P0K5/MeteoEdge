@@ -56,7 +56,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
-from pydantic import AfterValidator, BaseModel
+from pydantic import AfterValidator, BaseModel, Field
 
 from py_clob_client_v2.clob_types import BookParams
 
@@ -733,6 +733,28 @@ class CopySettledPnlPointOut(BaseModel):
     stake_usd: float
 
 
+class CopySkipReasonOut(BaseModel):
+    """One skip reason in a wallet's 24h breakdown (issue #1389). All display
+    strings come from ``src.data.copy_skip_reasons``; the frontend renders them
+    verbatim and keeps no reason vocabulary of its own."""
+    reason: str
+    meaning: str
+    # structural / routine / lifecycle / breaker / unknown
+    reason_class: str = Field(alias="class")
+    class_label: str
+    count: int
+    trend: str
+    accepted_ref: "str | None" = None
+
+    model_config = {"populate_by_name": True}
+
+
+class CopySignals24hOut(BaseModel):
+    placed: int
+    skipped: int
+    reasons: list[CopySkipReasonOut]
+
+
 class CopyWalletPnlBreakdownOut(BaseModel):
     """One wallet's row in the per-wallet P&L breakdown table. Carries both
     the realized figures (always present) and the backtest-comparison
@@ -762,6 +784,8 @@ class CopyWalletPnlBreakdownOut(BaseModel):
     divergence_pct: float | None = None
     opposite_side_contamination_pairs: int = 0
     opposite_side_contamination_usd: float = 0.0
+    # Issue #1389: PAPER rows only; None = could not be computed (never zeros).
+    signals_24h: "CopySignals24hOut | None" = None
 
 
 class CopyPnlTotalOut(BaseModel):
@@ -3667,6 +3691,42 @@ def copy_trading_set_wallet_live_enabled(
 # Copy-trading API — Positions & P&L view (epic F #1143, story F3 #1148)
 # ---------------------------------------------------------------------------
 
+def _copy_signal_counts_by_wallet() -> "dict | None":
+    """Per-wallet 24h placed/skipped counts (issue #1389), or None if the query
+    failed -- the paper per-wallet rows then carry ``signals_24h=None`` rather
+    than failing the whole endpoint or showing fake zeros."""
+    from src.data.copy_skip_reasons import BASELINE_DAYS, WINDOW_HOURS
+
+    now = datetime.now(timezone.utc)
+    win_start = now - timedelta(hours=WINDOW_HOURS)
+    try:
+        return _db.get_copy_signal_skip_counts(
+            win_start.isoformat(), (win_start - timedelta(days=BASELINE_DAYS)).isoformat()
+        )
+    except Exception:
+        logger.exception("Copy signal 24h counts query failed")
+        return None
+
+
+def _copy_signals_24h_for(address: str, counts: "dict | None") -> CopySignals24hOut:
+    from src.data.copy_skip_reasons import accepted_ref, describe_reason, trend
+
+    counts = counts or {"placed": 0, "skipped": {}}
+    reasons = []
+    for reason, (n_win, n_base) in counts["skipped"].items():
+        if n_win <= 0:
+            continue
+        cls, label, meaning = describe_reason(reason)
+        reasons.append(CopySkipReasonOut(
+            reason=reason, meaning=meaning, reason_class=cls, class_label=label,
+            count=n_win, trend=trend(n_win, n_base), accepted_ref=accepted_ref(address, reason),
+        ))
+    reasons.sort(key=lambda r: (-r.count, r.reason))
+    return CopySignals24hOut(
+        placed=counts["placed"], skipped=sum(r.count for r in reasons), reasons=reasons,
+    )
+
+
 @app.get("/api/copy-trading/positions", response_model=CopyPositionsOut)
 def copy_trading_positions() -> CopyPositionsOut:
     """Open positions, realized-P&L history, per-wallet breakdown (with
@@ -3754,6 +3814,8 @@ def copy_trading_positions() -> CopyPositionsOut:
     addresses = {row["address"] for row in _db.get_copy_realized_pnl_by_wallet()}
     addresses |= {w["address"] for w in _db.get_followed_wallets()}
 
+    signal_counts = _copy_signal_counts_by_wallet()
+
     realized_pnl_history: list[CopySettledPnlPointOut] = []
     per_wallet: list[CopyWalletPnlBreakdownOut] = []
     for address in addresses:
@@ -3775,6 +3837,10 @@ def copy_trading_positions() -> CopyPositionsOut:
             ),
             opposite_side_contamination_usd=(
                 contamination_row["locked_loss_usd_still_open"] if contamination_row else 0.0
+            ),
+            signals_24h=(
+                None if signal_counts is None
+                else _copy_signals_24h_for(address, signal_counts.get(address))
             ),
         ))
 

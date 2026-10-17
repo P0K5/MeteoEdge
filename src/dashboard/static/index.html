@@ -1001,6 +1001,29 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .copy-row-expandable{cursor:pointer;}
 .copy-row-expandable:hover{background:var(--surface-off);}
 .copy-row-expandable:focus-visible{outline:2px solid var(--primary);outline-offset:-2px;}
+/* Placed vs skipped signals (#1389). Tokens only; class always paired with a word. */
+.copy-signals-cell{white-space:normal;min-width:130px;}
+.copy-signals-summary{font-variant-numeric:tabular-nums;display:block;}
+.copy-signals-muted{color:var(--muted);}
+.copy-signals-toggle{margin-top:var(--space-1);min-height:44px;}
+.copy-signals-detail-td{background:var(--surface-2);white-space:normal;}
+.copy-signals-detail-panel{padding:var(--space-2) var(--space-3);}
+.copy-skip-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:var(--space-2);}
+.copy-skip-item{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2);font-size:var(--text-xs);}
+.copy-skip-count{font-weight:700;min-width:2ch;text-align:right;font-variant-numeric:tabular-nums;}
+.copy-skip-meaning{flex:1 1 100%;}
+.copy-skip-key{font-family:var(--font-mono);font-size:10px;color:var(--muted);overflow-wrap:anywhere;}
+.copy-skip-chip{display:inline-flex;align-items:center;gap:4px;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700;}
+.copy-skip-chip i{width:10px;height:10px;}
+.skip-class-structural,.skip-class-unknown,.copy-skip-trend{background:var(--warn-bg);color:var(--warn);}
+.skip-class-breaker{background:var(--no-bg);color:var(--no);}
+.skip-class-neutral,.copy-skip-accepted{background:var(--surface-off);color:var(--muted);}
+@media(min-width:601px){
+  .copy-skip-meaning{flex:1 1 auto;}
+}
+@media(max-width:600px){
+  .copy-signals-detail-td{position:sticky;left:0;max-width:calc(100vw - 32px);}
+}
 .copy-chevron{width:14px;height:14px;color:var(--muted);transition:transform var(--transition);flex-shrink:0;}
 .copy-detail-td{background:var(--surface-2);padding:0 !important;}
 .copy-detail-panel{padding:var(--space-4) var(--space-5);}
@@ -7724,6 +7747,7 @@ function _copyPerWalletTableHtml(rows) {
       <thead>
         <tr>
           <th class="copy-th" scope="col">Wallet</th>
+          <th class="copy-th" scope="col">Signals (24h)</th>
           <th class="copy-th" scope="col">Settled</th>
           <th class="copy-th" scope="col">Realized P&amp;L</th>
           ${backtestHeaderCells}
@@ -7741,6 +7765,136 @@ function _copyPerWalletTableHtml(rows) {
 // so it needs the same still-open-contamination disclosure. The function
 // itself already no-ops (`''`) for a wallet with nothing to disclose, so
 // a 0-pairs row renders identically to before this issue.
+// ── Placed vs skipped signals (issue #1389) ─────────────────────────────────
+// The API sends display-ready strings (meaning, class_label); this code keeps
+// NO skip-reason vocabulary -- it only picks a CSS modifier from `class`.
+const _copySignalsOpenWallets = new Set();  // wallets whose "Why skipped?" detail is open
+const _copySignalsMoreWallets = new Set();  // wallets whose reasons list is fully expanded
+const _COPY_SKIP_REASONS_SHOWN = 6;
+
+function _copySkipClassMod(cls) {
+  if (cls === 'structural') return 'structural';
+  if (cls === 'breaker') return 'breaker';
+  if (cls === 'routine' || cls === 'lifecycle') return 'neutral';
+  return 'unknown';   // includes any unexpected class, so a new one cannot hide
+}
+
+function _copySignalsDomId(address, prefix) {
+  return prefix + String(address).replace(/[^A-Za-z0-9_-]/g, '_');
+}
+
+function _copySignalsCellHtml(w) {
+  const s = w.signals_24h;
+  if (!s) {
+    return `<td class="copy-td copy-signals-cell"><span class="copy-signals-muted" title="Signal counts could not be loaded">Unavailable</span></td>`;
+  }
+  if (!s.placed && !s.skipped) {
+    return `<td class="copy-td copy-signals-cell"><span class="copy-signals-muted">No signals in 24h</span></td>`;
+  }
+  const skCls = s.skipped ? '' : ' class="copy-signals-muted"';
+  let btn = '';
+  if (s.skipped > 0) {
+    const open = _copySignalsOpenWallets.has(w.address);
+    const addrEsc = _copyEscapeHtml(w.address);
+    const label = open
+      ? `Hide reasons for wallet ${addrEsc}`
+      : `Show why ${s.skipped} signals were skipped for wallet ${addrEsc}`;
+    btn = `<button type="button" class="btn-followed-action copy-signals-toggle" data-address="${addrEsc}"
+        aria-expanded="${open ? 'true' : 'false'}" aria-controls="${_copySignalsDomId(w.address, 'copy-signals-detail-')}"
+        aria-label="${label}"><span class="copy-signals-toggle-label">${open ? 'Hide reasons' : 'Why skipped?'}</span>
+        <i data-lucide="${open ? 'chevron-up' : 'chevron-down'}"></i></button>`;
+  }
+  return `<td class="copy-td copy-signals-cell"><span class="copy-signals-summary">${Number(s.placed)} placed · <span${skCls}>${Number(s.skipped)} skipped</span></span>${btn}</td>`;
+}
+
+function _copySkipReasonItemHtml(r) {
+  const mod = _copySkipClassMod(r.class);
+  const icon = mod === 'unknown' ? '<i data-lucide="alert-triangle" aria-hidden="true"></i>' : '';
+  const trend = (r.trend === 'SPIKE' || r.trend === 'NEW')
+    ? `<span class="copy-skip-chip copy-skip-trend">${_copyEscapeHtml(r.trend)}</span>` : '';
+  const acc = r.accepted_ref
+    ? `<span class="copy-skip-chip copy-skip-accepted">Accepted (${_copyEscapeHtml(r.accepted_ref)})</span>` : '';
+  return `<li class="copy-skip-item">
+    <span class="copy-skip-count">${Number(r.count)}</span>
+    <span class="copy-skip-chip skip-class-${mod}">${icon}${_copyEscapeHtml(r.class_label)}</span>${trend}${acc}
+    <span class="copy-skip-meaning">${_copyEscapeHtml(r.meaning)}</span>
+    <code class="copy-skip-key">${_copyEscapeHtml(r.reason)}</code>
+  </li>`;
+}
+
+function _copySignalsDetailRowHtml(w, colspan) {
+  const s = w.signals_24h;
+  if (!s || !(s.skipped > 0)) return '';
+  const open = _copySignalsOpenWallets.has(w.address);
+  const addrEsc = _copyEscapeHtml(w.address);
+  const reasons = s.reasons || [];
+  const showAll = _copySignalsMoreWallets.has(w.address) || reasons.length <= _COPY_SKIP_REASONS_SHOWN;
+  const shown = showAll ? reasons : reasons.slice(0, _COPY_SKIP_REASONS_SHOWN);
+  const more = !showAll
+    ? `<button type="button" class="btn-followed-action copy-signals-more" data-address="${addrEsc}">+${reasons.length - shown.length} more reasons</button>`
+    : '';
+  return `
+    <tr class="copy-row copy-signals-detail" data-address="${addrEsc}"${open ? '' : ' hidden'}>
+      <td class="copy-td copy-signals-detail-td" colspan="${colspan}">
+        <div id="${_copySignalsDomId(w.address, 'copy-signals-detail-')}" class="copy-signals-detail-panel"
+             role="region" aria-label="Skip reasons for ${addrEsc}">
+          <div class="copy-detail-subhdr">Skipped in last 24h (${Number(s.skipped)})</div>
+          <ul class="copy-skip-list">${shown.map(_copySkipReasonItemHtml).join('')}</ul>${more}
+        </div>
+      </td>
+    </tr>`;
+}
+
+function _copySignalsRestoreFocus(address) {
+  if (!address) return;
+  const btn = [...document.querySelectorAll('.copy-signals-toggle')].find(b => b.dataset.address === address);
+  if (btn) btn.focus();
+}
+
+// Re-renders the per-wallet slot from the cached payload (open/"more" state
+// lives in the sets above, so nothing is lost) and restores focus to the
+// toggle by wallet address -- also used by the periodic poll render.
+function _copyRenderPerWalletSlot(rows, focusAddress) {
+  const ae = document.activeElement;
+  const focused = focusAddress || (ae && ae.classList && ae.classList.contains('copy-signals-toggle')
+    ? ae.dataset.address : null);
+  const changed = _copySetHtmlIfChanged(document.getElementById('copy-positions-wallet-slot'),
+    _copyPerWalletTableHtml(rows));
+  if (changed && focused) { lucide.createIcons(); _copySignalsRestoreFocus(focused); }
+  return changed;
+}
+
+function _copyToggleSignalsDetail(address) {
+  if (_copySignalsOpenWallets.has(address)) _copySignalsOpenWallets.delete(address);
+  else _copySignalsOpenWallets.add(address);
+  if (_copyPositionsData) {
+    if (_copyRenderPerWalletSlot(_copyPositionsData.per_wallet, address)) lucide.createIcons();
+  }
+}
+
+function _copySignalsOnClick(event) {
+  const toggle = event.target.closest('.copy-signals-toggle');
+  if (toggle) {
+    _copyToggleSignalsDetail(toggle.dataset.address);
+    return true;
+  }
+  const more = event.target.closest('.copy-signals-more');
+  if (more) {
+    _copySignalsMoreWallets.add(more.dataset.address);
+    if (_copyPositionsData && _copyRenderPerWalletSlot(_copyPositionsData.per_wallet)) lucide.createIcons();
+    return true;
+  }
+  return false;
+}
+
+function _copySignalsOnKeydown(event) {
+  if (event.key !== 'Escape') return;
+  const region = event.target.closest && event.target.closest('.copy-signals-detail');
+  if (!region) return;
+  const address = region.dataset.address;
+  if (_copySignalsOpenWallets.has(address)) _copyToggleSignalsDetail(address);
+}
+
 function _copyPerWalletRowHtml(w) {
   const addrEsc = _copyEscapeHtml(w.address);
   const pnlCls = w.realized_pnl_usd >= 0 ? 'copy-pnl-pos' : 'copy-pnl-neg';
@@ -7767,10 +7921,11 @@ function _copyPerWalletRowHtml(w) {
         </button>
         <span class="copy-feedback-label"></span>
       </td>
+      ${_copySignalsCellHtml(w)}
       <td class="copy-td">${w.n_settled}</td>
       <td class="copy-td ${pnlCls}">${_copyFmtUsd(w.realized_pnl_usd)}${_followedContaminationNoteHtml(w)}</td>
       ${backtestCells}
-    </tr>`;
+    </tr>${_copySignalsDetailRowHtml(w, _copyBacktestOn ? 6 : 4)}`;
 }
 
 // idPrefix distinguishes paper ('pos-', default) from live ('live-pos-')
@@ -7846,6 +8001,7 @@ function _copyReopenExpandedPositionDetails(idPrefix = 'pos-', expandedIds = _co
 }
 
 function _copyPositionsOnListClick(event) {
+  if (_copySignalsOnClick(event)) return;
   const copyBtn = event.target.closest('.copy-copy-btn');
   if (copyBtn) {
     event.stopPropagation();
@@ -7860,6 +8016,7 @@ function _copyPositionsOnListClick(event) {
 }
 
 function _copyPositionsOnListKeydown(event) {
+  if (event.key === 'Escape') { _copySignalsOnKeydown(event); return; }
   if (event.key !== 'Enter' && event.key !== ' ') return;
   const row = event.target.closest('.copy-position-row');
   if (!row) return;
@@ -7991,8 +8148,7 @@ function renderCopyPositions(data) {
   // changed (a new settle changes the breakdown but not the open table).
   const openChanged = _copySetHtmlIfChanged(document.getElementById('copy-positions-open-slot'),
     _copyOpenPositionsTableHtml(data.open_positions));
-  const walletChanged = _copySetHtmlIfChanged(document.getElementById('copy-positions-wallet-slot'),
-    _copyPerWalletTableHtml(data.per_wallet));
+  const walletChanged = _copyRenderPerWalletSlot(data.per_wallet);
   if (iconsDirty || openChanged || walletChanged) lucide.createIcons();
   if (openChanged) _copyReopenExpandedPositionDetails();
 }

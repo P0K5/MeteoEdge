@@ -2421,6 +2421,33 @@ class Database:
             self._conn.commit()
             return cur.lastrowid
 
+    def get_copy_signal_skip_counts(self, window_start: str, baseline_start: str) -> "dict[str, dict]":
+        """Per-wallet placed/skipped signal counts (issue #1389).
+
+        ``{address: {"placed": n_in_window, "skipped": {reason: (n_window, n_baseline)}}}``
+        where the window is ``detected_at >= window_start`` and the baseline is
+        ``baseline_start <= detected_at < window_start``. "Placed" is
+        ``order_placed=1``; "skipped" is a non-empty ``skip_reason`` -- the same
+        definition as ``daily_health_report._copy_skip_counts``. One grouped
+        query for all wallets (index ``idx_copy_signals_detected``).
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT address, order_placed, skip_reason, "
+                "SUM(detected_at >= ?) AS n_win, SUM(detected_at < ?) AS n_base "
+                "FROM copy_signals WHERE detected_at >= ? "
+                "GROUP BY address, order_placed, skip_reason",
+                (window_start, window_start, baseline_start),
+            ).fetchall()
+        out: dict = {}
+        for r in rows:
+            w = out.setdefault(r["address"], {"placed": 0, "skipped": {}})
+            if r["order_placed"]:
+                w["placed"] += int(r["n_win"] or 0)
+            elif r["skip_reason"]:
+                w["skipped"][r["skip_reason"]] = (int(r["n_win"] or 0), int(r["n_base"] or 0))
+        return out
+
     def insert_copy_position(
         self,
         *,
