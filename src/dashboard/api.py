@@ -8,6 +8,9 @@ Endpoints:
     GET /api/health     — liveness probe (ISO timestamp)
     GET /api/bot-log    — tail of logs/bot.log
     GET /api/portfolio  — open + closed positions, sourced from CLOB trade history
+    GET /api/portfolio/history — closed positions only, DB/JSONL-sourced (no
+                                  network calls) so it's decoupled from the
+                                  wallet-fetch latency above (issue #1457)
     GET /api/cities/{city}/taf      — TAF windows with disruption flag
     GET /api/cities/{city}/deb      — DEB model weights and RMSE
     GET /api/cities/{city}/analysis — intraday correction analysis
@@ -356,6 +359,11 @@ class ClosedPositionOut(BaseModel):
 class PortfolioOut(BaseModel):
     cash_usdc: float
     open_positions: list[PositionOut]
+    closed_positions: list[ClosedPositionOut]
+    updated_at: str
+
+
+class PortfolioHistoryOut(BaseModel):
     closed_positions: list[ClosedPositionOut]
     updated_at: str
 
@@ -2042,6 +2050,32 @@ def portfolio() -> PortfolioOut:
         _portfolio_cache["data"] = result
 
     return result
+
+
+@app.get("/api/portfolio/history", response_model=PortfolioHistoryOut)
+def portfolio_history() -> PortfolioHistoryOut:
+    """Trade history only, decoupled from /api/portfolio's wallet-fetch
+    latency (issue #1457, follow-up from #814).
+
+    Built from ``_closed_positions_from_jsonl_and_db()`` -- the same helper
+    ``portfolio()`` uses for its ``closed_positions`` field -- which touches
+    no network (no wallet/CLOB/NWS calls), so this endpoint is always fast
+    regardless of how slow or flaky the live wallet fetch is. The frontend
+    polls this endpoint independently of the open-positions fetch so history
+    renders without waiting on the slower call.
+
+    ``/api/portfolio``'s own ``closed_positions`` field is unchanged and kept
+    for backward compatibility, and because it's still the only source for
+    the rare "manual trade" entries only discoverable via the wallet API's
+    redeemable-position fallback (see ``_positions_from_wallet()``'s
+    docstring) -- this endpoint cannot see those. The frontend merges them in
+    by ``token_id`` once ``/api/portfolio`` resolves.
+    """
+    closed_pos, *_ = _closed_positions_from_jsonl_and_db()
+    return PortfolioHistoryOut(
+        closed_positions=closed_pos,
+        updated_at=datetime.now(timezone.utc).isoformat(),
+    )
 
 
 @app.post("/api/positions/{token_id}/sell", response_model=SellPositionOut)
