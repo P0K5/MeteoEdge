@@ -5297,19 +5297,39 @@ function _copyColumnHeaderHtml(col) {
 }
 
 function _copyStabilityBadgeHtml(candidate) {
-  // A wallet's first-ever screening run has nothing to have "swung"
-  // against yet -- has_prior_run=false means "not yet tested twice", not
-  // "proven unstable". Labeling it identically to a wallet whose re-screen
-  // actually disagreed would mislead operators into unfairly skipping good
-  // new candidates (Designer review, PR #1152). Reuses .badge-stable's
-  // neutral (non-warning) coloring with a distinct icon/label, reserving
-  // .badge-unstable for the proven-disagreement case.
+  // Issue #1309: Use stability_reason to distinguish between:
+  // - Transient states (stale_comparison, first_run, median_roi_missing):
+  //   the wallet needs time/data but hasn't proven unstable
+  // - Permanent instability (sign_mismatch, volume_swing): the last two runs
+  //   genuinely disagree on profitability/volume
+  // - Stable (ok): the two runs agree
+  //
+  // Designer note: This currently reuses badge-stable for transient cases
+  // and badge-unstable for permanent ones. Consider if stale_comparison
+  // should get a third visual treatment to highlight "wallet dropped out of
+  // screening" as distinct from "new" (first_run) or "incomplete data"
+  // (median_roi_missing).
+  const reason = candidate.stability_reason;
+
   if (!candidate.has_prior_run) {
+    // First-ever screening run -- "not yet tested twice", not "proven unstable"
+    // (Designer review, PR #1152).
     return `<span class="badge-stable"><i data-lucide="hourglass"></i>New</span>`;
   }
-  return candidate.unstable
-    ? `<span class="badge-unstable"><i data-lucide="alert-triangle"></i>Unstable</span>`
-    : `<span class="badge-stable"><i data-lucide="check-circle"></i>Stable</span>`;
+
+  // Proven instability: last two runs disagreed on sign or volume.
+  if (reason === 'sign_mismatch' || reason === 'volume_swing') {
+    return `<span class="badge-unstable"><i data-lucide="alert-triangle"></i>Unstable</span>`;
+  }
+
+  // Transient gaps: wallet dropped out of screening, or current run lacks data.
+  // Not a proof of instability, but means "hold on comparison until next run".
+  if (reason === 'stale_comparison' || reason === 'median_roi_missing') {
+    return `<span class="badge-unstable"><i data-lucide="alert-triangle"></i>Waiting for data</span>`;
+  }
+
+  // Stable: the two runs agree on profitability direction and volume.
+  return `<span class="badge-stable"><i data-lucide="check-circle"></i>Stable</span>`;
 }
 
 function _copyTruncatedBadgeHtml(candidate) {
