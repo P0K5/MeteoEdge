@@ -69,16 +69,37 @@ A PR may NEVER be approved or merged unless ALL of the following are true:
    must show green on the PR's **head commit**. Verify via
    `mcp__github__actions_list` (or equivalent) before approving.
 2. **No direct pushes to master** — every change, including one-line hotfixes,
-   goes through a PR. **Branch protection does NOT currently block this** —
-   `git push origin master` succeeds. You are the only thing enforcing it.
+   goes through a PR. **Branch protection is now enabled on `master`**
+   (configured 2026-10-17, issue #1444) with `enforce_admins: true`, so
+   `git push origin master` is rejected for everyone, including the Tech Lead
+   PM's token — there is no admin bypass. `required_status_checks.strict`
+   is also enabled ("require branches to be up to date before merging"),
+   which closes the staleness gap #1444 was filed for: GitHub now refuses to
+   merge a PR whose last CI run predates the current `master` tip, so a base
+   branch that moved after the PR's last push can no longer slip through on
+   a stale green check (the #1357/#1441/#1443 incident this issue
+   documents). Required status checks: `Guard against graphify-out/ changes`,
+   `Lint (flake8)`, `Test (pytest)`, `PR body (How to deploy + issue link)`,
+   `gitleaks`.
 
-   Therefore, before the *first* `git commit` of any change, run
+   **`AI / DeepSeek review` is deliberately NOT a GitHub-enforced required
+   check**, even though it's still mandatory in practice via rule 1 above and
+   must be verified by a human before every approval. Reason: the review
+   workflow has repeatedly posted a second, zero-step duplicate check run
+   under the same name that fails instantly (`started_at == completed_at`,
+   no steps) independent of the real review's verdict — see the pr-review
+   skill's "known flake" note. Making it a hard-required GitHub check would
+   let that duplicate block a merge with no recourse other than an admin
+   override, which `enforce_admins: true` above deliberately forecloses.
+   Keeping it a human-verified-not-GitHub-blocking gate preserves the
+   ability to read the *real* review's verdict and act on it instead of on
+   infra flakiness. Revisit if that duplicate-check bug gets fixed upstream.
+
+   Before the *first* `git commit` of any change, still run
    `git rev-parse --abbrev-ref HEAD`. If it prints `master`, stop and
-   `git checkout -b <type>/<issue>-<slug>` first. Committing on master and
-   branching afterwards is not equivalent: `gh pr create` refuses a
-   head branch equal to base, and the recovery
-   (`git reset --soft HEAD~1` + `git push --force origin master`) rewrites
-   shared history. Never force-push master.
+   `git checkout -b <type>/<issue>-<slug>` first — branch protection rejects
+   the push regardless, but catching it before committing avoids the
+   `git reset --soft HEAD~1` cleanup dance. Never force-push master.
 3. **Approval comes after CI is green** — if CI is still running, wait. If CI is
    red, the author must fix it first; never approve in anticipation of a fix.
 

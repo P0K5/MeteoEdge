@@ -139,27 +139,39 @@ hand-roll workarounds; use this instead:
     When fixing blocking items, read the `AI / DeepSeek review` PR comment
     first and use its checklist as your task list.
 
-## Handling authorship collisions — PM comment-recorded approval (fallback)
+## Handling authorship collisions — fix forward, never comment-approve
 
-**When to use this:**
-If after following step 8 (exporting `GH_TOKEN="$GITHUB_TOKEN_OPERATIONAL"`),
-the PM still cannot approve your PR because GitHub reports "Can not approve
-your own pull request" (which should never happen if the fix is working), use
-this sanctioned fallback:
+**This section changed 2026-10-17 (issue #1444).** Master now has real branch
+protection: `required_pull_request_reviews.required_approving_review_count: 1`
+is a GitHub-**enforced** gate, and `enforce_admins: true` means there is no
+bypass for anyone, including the Tech Lead PM. A PM comment reading "Approved
+(via comment — GitHub API collision)" used to be treated as formally
+equivalent to a real review approval — **it no longer does anything.** The
+merge button stays hard-blocked regardless of what anyone writes in a
+comment. Do not rely on that fallback; it is dead.
 
-1. The PM will post a comment on the PR in the format:
+**If a PR shows the PM (`P0K5`) as author** — which happens when `gh`'s
+keyring default login is used instead of the operational token, usually
+because `export GH_TOKEN="$GITHUB_TOKEN_OPERATIONAL"` wasn't in the *same*
+shell invocation as `gh pr create` — the only correct recovery is to fix
+forward, not to work around the review gate:
+
+1. Close the misauthored PR (either token can do this).
+2. Re-open a new PR from the **same branch**, same commit(s) — do not rewrite
+   history or force-push. Re-run `gh pr create`, chaining the export and the
+   create call together in one invocation:
+   ```bash
+   export GH_TOKEN="$GITHUB_TOKEN_OPERATIONAL" && gh pr create \
+     --title "..." --body "..."
    ```
-   Approved (via comment — GitHub API collision). 
-   
-   Rationale: [brief note]
-   ```
-2. This comment-recorded approval is FORMALLY EQUIVALENT to a GitHub review
-   approval for governance purposes — the PR can be merged once CI is green.
-3. If this fallback is ever needed, **immediately post an issue** to the Tech
-   Lead PM describing what failed, so the root cause can be investigated.
-
-**Note:** This fallback should be rare. If you hit it repeatedly, the root
-cause is likely an environment or token setup issue — escalate immediately.
+3. Verify the new PR's author before handing back:
+   `gh pr view <N> --json author --jq .author.login` must print
+   `ClaudioSenior`, not `P0K5`.
+4. If it still doesn't work after two tries, **stop and escalate to the Tech
+   Lead PM** rather than attempting a comment-approval or any other
+   workaround of the review gate — with `enforce_admins: true`, there is no
+   sanctioned bypass left, and repeated failures point to an environment or
+   token setup issue that needs root-cause investigation, not a workaround.
 
 ## Pre-review checklist
 
