@@ -367,6 +367,152 @@ class TestPositionsFromWalletConcurrency:
 
 
 # ---------------------------------------------------------------------------
+# _positions_from_wallet() — issue #1461: settled copy-trading positions
+# must use the real copy_live_positions outcome, not the unreliable
+# curPrice >= 0.99 guess.
+# ---------------------------------------------------------------------------
+
+class TestPositionsFromWalletCopyTradeSettlement:
+    @staticmethod
+    def _fake_wallet_response(rows):
+        class _FakeResp:
+            def __init__(self, data):
+                self._data = data
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return self._data
+
+        def _fake_get(url, timeout=None):
+            if "offset=0" in url:
+                return _FakeResp(rows)
+            return _FakeResp([])
+
+        return _fake_get
+
+    @staticmethod
+    def _mock_db(copy_live_rows):
+        mock_db = MagicMock()
+        mock_db.get_open_positions.return_value = []
+        mock_db.get_settled_live_trades.return_value = []
+        mock_db.get_copy_live_positions.return_value = copy_live_rows
+        return mock_db
+
+    def test_settled_copy_trade_uses_real_pnl_not_curprice_guess(self, monkeypatch):
+        """The exact production scenario from issue #1461: a redeemable
+        wallet row with curPrice=0 (the unreliable guess would call this a
+        loss) that actually matches a 'settled' copy_live_positions row
+        with a positive settled_pnl_usd -- the real outcome must win."""
+        from src.dashboard import api
+
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", "0x" + "3" * 40)
+
+        wallet_row = {
+            "asset": "tok-copy-win",
+            "size": 100.0,
+            "avgPrice": 0.05,
+            "outcome": "NO",
+            "title": "Will the high temperature in Chicago be above 80F?",
+            "redeemable": True,
+            "conditionId": "0xcond-copy-win",
+            "curPrice": 0.0,
+            "initialValue": 5.0,
+            "endDate": "2026-10-10T00:00:00Z",
+        }
+        copy_live_rows = [{
+            "status": "settled",
+            "market": "0xcond-copy-win",
+            "outcome_index": 1,  # NO
+            "settled_pnl_usd": 37.5,
+        }]
+
+        mock_db = self._mock_db(copy_live_rows)
+
+        with patch.object(api, "_db", mock_db), \
+             patch.object(api, "httpx") as mock_httpx:
+            mock_httpx.get.side_effect = self._fake_wallet_response([wallet_row])
+            _open_pos, closed_pos = api._positions_from_wallet(client=MagicMock())
+
+        assert len(closed_pos) == 1
+        pos = closed_pos[0]
+        assert pos.pnl == pytest.approx(37.5)
+        assert pos.exit_reason == "won"
+        assert pos.token_id == "tok-copy-win"
+
+    def test_settled_copy_trade_loss_also_uses_real_pnl(self, monkeypatch):
+        """A genuine copy-trade loss must still report its real (negative)
+        pnl, not just happen to agree with the curPrice guess by accident."""
+        from src.dashboard import api
+
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", "0x" + "4" * 40)
+
+        wallet_row = {
+            "asset": "tok-copy-loss",
+            "size": 50.0,
+            "avgPrice": 0.10,
+            "outcome": "YES",
+            "title": "Will the high temperature in Atlanta be above 90F?",
+            "redeemable": True,
+            "conditionId": "0xcond-copy-loss",
+            "curPrice": 0.0,
+            "initialValue": 5.0,
+            "endDate": "2026-10-11T00:00:00Z",
+        }
+        copy_live_rows = [{
+            "status": "settled",
+            "market": "0xcond-copy-loss",
+            "outcome_index": 0,  # YES
+            "settled_pnl_usd": -5.0,
+        }]
+
+        mock_db = self._mock_db(copy_live_rows)
+
+        with patch.object(api, "_db", mock_db), \
+             patch.object(api, "httpx") as mock_httpx:
+            mock_httpx.get.side_effect = self._fake_wallet_response([wallet_row])
+            _open_pos, closed_pos = api._positions_from_wallet(client=MagicMock())
+
+        assert len(closed_pos) == 1
+        pos = closed_pos[0]
+        assert pos.pnl == pytest.approx(-5.0)
+        assert pos.exit_reason == "lost"
+
+    def test_unmatched_redeemable_row_still_falls_back_to_curprice_guess(self, monkeypatch):
+        """A manual trade (no DB/JSONL/copy-trading record at all) must
+        still go through the pre-existing curPrice fallback unchanged."""
+        from src.dashboard import api
+
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", "0x" + "5" * 40)
+
+        wallet_row = {
+            "asset": "tok-manual",
+            "size": 20.0,
+            "avgPrice": 0.5,
+            "outcome": "YES",
+            "title": "Will the high temperature in Miami be above 95F?",
+            "redeemable": True,
+            "conditionId": "0xcond-manual",
+            "curPrice": 1.0,
+            "initialValue": 10.0,
+            "endDate": "2026-10-12T00:00:00Z",
+        }
+        # No copy_live_positions row matches this conditionId at all.
+        mock_db = self._mock_db([])
+
+        with patch.object(api, "_db", mock_db), \
+             patch.object(api, "httpx") as mock_httpx:
+            mock_httpx.get.side_effect = self._fake_wallet_response([wallet_row])
+            _open_pos, closed_pos = api._positions_from_wallet(client=MagicMock())
+
+        assert len(closed_pos) == 1
+        pos = closed_pos[0]
+        assert pos.exit_reason == "won"
+        assert pos.pnl == pytest.approx(20.0 * 1.0 - 10.0)
+
+
+# ---------------------------------------------------------------------------
 # /api/portfolio — issue #812: short-TTL server-side cache
 # ---------------------------------------------------------------------------
 

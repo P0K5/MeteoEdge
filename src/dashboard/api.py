@@ -1401,6 +1401,53 @@ def _db_settled_positions() -> list[ClosedPositionOut]:
     return result, condition_ids
 
 
+def _copy_live_settled_lookup() -> "dict[tuple[str, int], dict]":
+    """Return settled copy-trading positions keyed by ``(conditionId, outcome_index)``.
+
+    Copy-trading places and settles real orders on the same deposit wallet
+    ``_positions_from_wallet()`` queries, independently of the weather bot's
+    own ``trades`` table / ``live_trades.jsonl`` (issue #1461). The weather
+    bot's own live trading has been inactive since 2026-08-16, while
+    copy-trading has settled 149+ real positions since -- a table neither
+    ``_db_settled_positions()`` nor the JSONL-sourced sets above ever check.
+    Without this, every settled copy-trade falls into the wallet redeemable
+    branch's ``curPrice >= 0.99`` guess, which is documented there as
+    unreliable (always ~0 for a resolved market with no active orderbook)
+    and renders every one of them as a loss regardless of the real outcome.
+
+    ``copy_live_positions.address`` is the *followed* (source) wallet being
+    copied, not the deposit wallet the Positions API reports on -- our own
+    account holds the tokens for every followed wallet's copies alike, so
+    this intentionally does not filter by address (mirrors
+    ``db.get_copy_live_positions()`` called with no address). ``market`` is
+    the same ``0x...`` condition ID the wallet API reports as
+    ``conditionId``; ``outcome_index`` is 0 (YES) / 1 (NO) per
+    ``copy_pnl.copy_position_won()``'s convention.
+
+    Returns ``{}`` if ``_db`` is None, the query fails, or there are no
+    settled rows. On a rare (market, outcome_index) collision across two
+    followed wallets, the last row wins -- no worse than the unconditional
+    loss this replaces.
+    """
+    if _db is None:
+        return {}
+    try:
+        rows = _db.get_copy_live_positions()
+    except Exception:
+        logger.warning("_copy_live_settled_lookup: DB query failed", exc_info=True)
+        return {}
+    result: dict[tuple[str, int], dict] = {}
+    for r in rows:
+        if r.get("status") != "settled":
+            continue
+        market = str(r.get("market") or "")
+        outcome_index = r.get("outcome_index")
+        if not market or outcome_index is None:
+            continue
+        result[(market, int(outcome_index))] = r
+    return result
+
+
 def _closed_positions_from_jsonl_and_db() -> (
     "tuple[list[ClosedPositionOut], dict[str, dict], set[str], set[str]]"
 ):
@@ -1585,6 +1632,12 @@ def _positions_from_wallet(client=None) -> tuple[list[PositionOut], list[ClosedP
         jsonl_settled_tokens,
         db_settled_condition_ids,
     ) = _closed_positions_from_jsonl_and_db()
+    # Settled copy-trading positions (issue #1461) -- a third authoritative
+    # source the wallet redeemable branch must defer to, same reasoning as
+    # the two sets above but keyed by (conditionId, outcome_index) since
+    # copy_live_positions never carries a token_id either. See
+    # _copy_live_settled_lookup() for why this isn't filtered by address.
+    copy_live_settled = _copy_live_settled_lookup()
     snap_probs = _latest_model_probs()
     # Fallback prob source for stations outside scanner active-hours window (#425).
     # The always-on re-pricer writes position_snapshots.jsonl 24/7; we use it
@@ -1698,12 +1751,38 @@ def _positions_from_wallet(client=None) -> tuple[list[PositionOut], list[ClosedP
                 condition_id and condition_id in db_settled_condition_ids
             ):
                 continue
-            # No JSONL/DB record (e.g. manual trade not made by the bot): fall
-            # back to Polymarket Data API.  Note: curPrice is unreliable for
-            # resolved markets without an active orderbook — it's 0 even for
-            # winning tokens — so this branch may still misclassify rare
-            # non-bot winners.  Logging the limitation here in case future
-            # work needs a better signal (resolution event or redemption).
+            # Settled copy-trading position (issue #1461): defer to the real
+            # settled_pnl_usd from copy_live_positions ahead of the curPrice
+            # guess below, the same way the JSONL/DB sets above are deferred
+            # to. outcome_index 0=YES, 1=NO (copy_pnl.copy_position_won()).
+            copy_match = copy_live_settled.get(
+                (condition_id, 0 if side == "YES" else 1)
+            ) if condition_id else None
+            if copy_match is not None:
+                pnl = round(float(copy_match.get("settled_pnl_usd") or 0.0), 2)
+                is_win = pnl > 0
+                closed_positions.append(ClosedPositionOut(
+                    question=question,
+                    station=str(enrich.get("station", "")),
+                    side=side,
+                    bracket_low=float(enrich.get("bracket_low", 0.0)),
+                    bracket_high=float(enrich.get("bracket_high", 0.0)),
+                    entry_price=avg_entry_cents,
+                    exit_price=100 if is_win else 0,
+                    pnl=pnl,
+                    shares=round(shares, 4),
+                    closed_at=str(row.get("endDate") or ""),
+                    token_id=token_id,
+                    exit_reason="won" if is_win else "lost",
+                ))
+                continue
+            # No JSONL/DB/copy-trading record (e.g. manual trade not made by
+            # the bot or by copy-trading): fall back to Polymarket Data API.
+            # Note: curPrice is unreliable for resolved markets without an
+            # active orderbook — it's 0 even for winning tokens — so this
+            # branch may still misclassify rare non-bot/non-copy winners.
+            # Logging the limitation here in case future work needs a
+            # better signal (resolution event or redemption).
             initial_value = float(row.get("initialValue") or shares * avg_price)
             cur_price = float(row.get("curPrice") or 0)
             is_win = cur_price >= 0.99
