@@ -140,6 +140,64 @@ class TestCandidatesEndpoint:
         assert row["eligible_to_follow"] is True
         assert row["has_prior_run"] is True
 
+    def test_stability_reason_ok_when_two_runs_agree(self, api_client):
+        """Issue #1309: stability_reason is 'ok' when the two runs agree."""
+        client, db = api_client
+        _screen(db, "0xStable", screened_at="2026-09-01T00:00:00Z",
+                n_resolved=100, median_roi=0.10, eligible_to_follow=0)
+        _screen(db, "0xStable", screened_at="2026-09-02T00:00:00Z",
+                n_resolved=105, median_roi=0.12, eligible_to_follow=1)
+
+        resp = client.get("/api/copy-trading/candidates")
+        row = resp.json()["candidates"][0]
+        assert row["stability_reason"] == "ok"
+        assert row["unstable"] is False
+
+    def test_stability_reason_sign_mismatch_on_sign_flip(self, api_client):
+        """Issue #1309: stability_reason is 'sign_mismatch' when median_roi
+        flips sign (the proven-instability case, not stale-comparison)."""
+        client, db = api_client
+        _screen(db, "0xSignFlip", screened_at="2026-09-01T00:00:00Z",
+                n_resolved=7498, median_roi=0.334, eligible_to_follow=0)
+        _screen(db, "0xSignFlip", screened_at="2026-09-01T15:00:00Z",
+                n_resolved=7500, median_roi=-1.0, eligible_to_follow=0)
+
+        resp = client.get("/api/copy-trading/candidates")
+        row = resp.json()["candidates"][0]
+        assert row["stability_reason"] == "sign_mismatch"
+        assert row["unstable"] is True
+
+    def test_stability_reason_stale_comparison_when_far_apart(self, api_client):
+        """Issue #1309: stability_reason is 'stale_comparison' when two runs
+        are too far apart in time (>36 hours) to compare meaningfully. This
+        is the key distinction: unlike sign_mismatch/volume_swing (proven
+        disagreement), stale_comparison means the comparison cannot be made
+        at all (wallet dropped out of screening pool for a while)."""
+        client, db = api_client
+        _screen(db, "0xStale", screened_at="2026-09-01T00:00:00Z",
+                n_resolved=100, median_roi=0.10, eligible_to_follow=0)
+        # 40 hours later -- beyond 36-hour max gap
+        _screen(db, "0xStale", screened_at="2026-09-02T16:00:00Z",
+                n_resolved=105, median_roi=0.12, eligible_to_follow=0)
+
+        resp = client.get("/api/copy-trading/candidates")
+        row = resp.json()["candidates"][0]
+        assert row["stability_reason"] == "stale_comparison"
+        assert row["unstable"] is True
+
+    def test_stability_reason_first_run_when_no_prior(self, api_client):
+        """Issue #1309: stability_reason is 'first_run' when a wallet has
+        never been screened before."""
+        client, db = api_client
+        _screen(db, "0xBrandNew", screened_at="2026-09-01T00:00:00Z",
+                n_resolved=50, median_roi=0.15, eligible_to_follow=0)
+
+        resp = client.get("/api/copy-trading/candidates")
+        row = resp.json()["candidates"][0]
+        assert row["stability_reason"] == "first_run"
+        assert row["unstable"] is True
+        assert row["has_prior_run"] is False
+
     def test_has_prior_run_false_on_first_ever_screening_run(self, api_client):
         """A wallet's very first screening run has nothing to compare
         against -- unstable=True (conservative default), but has_prior_run
