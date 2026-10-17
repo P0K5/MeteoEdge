@@ -33,10 +33,10 @@ BLOCK() { echo "BLOCKED: $*" >&2; exit 1; }
 log()   { echo "[ensure_worktree] $*" >&2; }
 
 # Normalize a path for STRING COMPARISON ONLY (never for display/output).
-# Issue #1235: on Windows this script compares repo roots obtained from two
-# tools that spell the same directory differently -- bash `pwd` (and anything
-# derived from it) emits MSYS form, e.g. `/c/Coding/MeteoEdge`, while native
-# `git.exe rev-parse --show-toplevel` emits drive-letter form, e.g.
+# Issues #924 and #1235: on Windows this script compares repo roots obtained
+# from two tools that spell the same directory differently -- bash `pwd` (and
+# anything derived from it) emits MSYS form, e.g. `/c/Coding/MeteoEdge`, while
+# native `git.exe rev-parse --show-toplevel` emits drive-letter form, e.g.
 # `C:/Coding/MeteoEdge`. Those two strings never compare equal even when they
 # name the same directory. This bug existed TWICE with opposite operators:
 # the reuse check (`=`) never matched a genuinely-reusable worktree (always
