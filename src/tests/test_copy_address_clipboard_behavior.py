@@ -54,7 +54,7 @@ def _extract_function(source: str, signature: str) -> str:
 
 
 def _functions() -> str:
-    html = INDEX_HTML.read_text()
+    html = INDEX_HTML.read_text(encoding="utf-8")
     return (
         _extract_function(html, "function _copyTruncateAddress(")
         + "\n"
@@ -529,7 +529,7 @@ def test_hint_is_visible_text_in_overlay_not_only_a_title():
 
 
 def test_css_icon_colour_and_mobile_rules_exist():
-    html = INDEX_HTML.read_text()
+    html = INDEX_HTML.read_text(encoding="utf-8")
     assert ".copy-copy-btn[data-copy-state=success]" in html and "color:var(--yes)" in html
     assert ".copy-copy-btn[data-copy-state=error]" in html
     mobile = html[html.index("@media(max-width:600px){\n  .copy-feedback-label"):]
