@@ -162,10 +162,10 @@ def test_tab_bar_still_has_required_overflow_properties():
     """
     html = INDEX_HTML.read_text(encoding="utf-8")
 
-    # Find the base .tab-bar CSS rule by searching for the pattern after light theme rule
+    # Find the base .tab-bar CSS rule by searching for the pattern (background followed by border-bottom)
     # Look for the standalone .tab-bar{ rule that comes after the theme-specific ones
-    match = re.search(r'\.tab-bar\{\s*border-bottom[^}]*\}', html, re.DOTALL)
-    assert match, ".tab-bar CSS rule with border-bottom property not found"
+    match = re.search(r'\.tab-bar\{\s*background:.*?border-bottom[^}]*\}', html, re.DOTALL)
+    assert match, ".tab-bar CSS rule with background and border-bottom properties not found"
 
     tab_bar_css = match.group(0)
 
