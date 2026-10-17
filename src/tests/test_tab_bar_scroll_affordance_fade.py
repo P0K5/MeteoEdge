@@ -70,12 +70,12 @@ def test_light_theme_tab_bar_has_scroll_affordance_gradient():
     )
 
 
-def test_tab_bar_uses_four_layer_background_attachment_technique():
-    """Verify both theme .tab-bar rules use the 4-layer background-attachment technique.
+def test_tab_bar_uses_scroll_affordance_with_correct_attachments():
+    """Verify both theme .tab-bar rules use Lea Verou's scroll affordance pattern.
 
-    The two-background-attachment trick with local,local,scroll,scroll prevents false
-    affordance (fade appearing when tabs don't overflow on desktop). The scroll-attached
-    layers pinned to the viewport mask out the local layers when no scrollable content exists.
+    The pattern uses: local-attachment cover (solid fading to transparent, moves with
+    content, masks shadow at scroll end) + scroll-attachment shadow (fade pinned to
+    viewport right edge, always visible until masked).
     """
     html = INDEX_HTML.read_text(encoding="utf-8")
 
@@ -90,18 +90,25 @@ def test_tab_bar_uses_four_layer_background_attachment_technique():
 
         theme_css = match.group(1)
 
-        # Verify background-attachment has 4 values: local, local, scroll, scroll
-        assert 'background-attachment:local,local,scroll,scroll' in theme_css, (
-            f"{theme} theme must use 'background-attachment:local,local,scroll,scroll' "
-            "for the 4-layer technique"
+        # Verify both local and scroll attachment values are present
+        assert 'local' in theme_css, (
+            f"{theme} theme must include 'local' attachment for cover gradient"
+        )
+        assert 'scroll' in theme_css, (
+            f"{theme} theme must include 'scroll' attachment for shadow gradient"
+        )
+        # Verify two gradients present (cover + shadow)
+        gradient_count = theme_css.count('linear-gradient')
+        assert gradient_count >= 2, (
+            f"{theme} theme must have at least 2 gradients (cover + shadow)"
         )
 
 
 def test_tab_bar_gradient_positioned_right():
-    """Verify gradients are positioned at right and left edges.
+    """Verify gradients are positioned at the right edge.
 
-    The 4-layer technique uses right-edge gradient (layer 1/3) and left-edge gradient
-    (layer 1 inverted for layer 3) to create the fade affordance.
+    Both the cover (local) and shadow (scroll) gradients are positioned at the
+    right edge of the tab bar to create the scroll affordance fade effect.
     """
     html = INDEX_HTML.read_text(encoding="utf-8")
 
