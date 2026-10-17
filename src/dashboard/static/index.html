@@ -1018,6 +1018,10 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .skip-class-structural,.skip-class-unknown,.copy-skip-trend{background:var(--warn-bg);color:var(--warn);}
 .skip-class-breaker{background:var(--no-bg);color:var(--no);}
 .skip-class-neutral,.copy-skip-accepted{background:var(--surface-off);color:var(--muted);}
+/* Dark theme: --muted on --surface-off/-2 is 3.35/3.59:1 (< 4.5:1); use --text (10.4/11.2:1). */
+[data-theme="dark"] .skip-class-neutral,[data-theme="dark"] .copy-skip-accepted,
+[data-theme="dark"] .copy-skip-key,[data-theme="dark"] .copy-signals-muted{color:var(--text);}
+.copy-skip-item:focus{outline:2px solid var(--primary);outline-offset:2px;}
 @media(min-width:601px){
   .copy-skip-meaning{flex:1 1 auto;}
 }
@@ -7814,7 +7818,7 @@ function _copySkipReasonItemHtml(r) {
     ? `<span class="copy-skip-chip copy-skip-trend">${_copyEscapeHtml(r.trend)}</span>` : '';
   const acc = r.accepted_ref
     ? `<span class="copy-skip-chip copy-skip-accepted">Accepted (${_copyEscapeHtml(r.accepted_ref)})</span>` : '';
-  return `<li class="copy-skip-item">
+  return `<li class="copy-skip-item" tabindex="-1">
     <span class="copy-skip-count">${Number(r.count)}</span>
     <span class="copy-skip-chip skip-class-${mod}">${icon}${_copyEscapeHtml(r.class_label)}</span>${trend}${acc}
     <span class="copy-skip-meaning">${_copyEscapeHtml(r.meaning)}</span>
@@ -7880,8 +7884,14 @@ function _copySignalsOnClick(event) {
   }
   const more = event.target.closest('.copy-signals-more');
   if (more) {
-    _copySignalsMoreWallets.add(more.dataset.address);
+    const address = more.dataset.address;
+    _copySignalsMoreWallets.add(address);
     if (_copyPositionsData && _copyRenderPerWalletSlot(_copyPositionsData.per_wallet)) lucide.createIcons();
+    // The clicked button is gone after the re-render: focus the first newly revealed item.
+    const region = document.getElementById(_copySignalsDomId(address, 'copy-signals-detail-'));
+    const items = region ? region.querySelectorAll('.copy-skip-item') : [];
+    const target = items[_COPY_SKIP_REASONS_SHOWN] || items[0] || region;
+    if (target) target.focus();
     return true;
   }
   return false;

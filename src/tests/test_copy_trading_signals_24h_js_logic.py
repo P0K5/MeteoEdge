@@ -100,3 +100,12 @@ def test_per_wallet_signals_24h_js_logic(tmp_path):
     result = subprocess.run([NODE, str(script)], capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     assert "SIGNALS_24H_JS_ASSERTIONS_PASSED" in result.stdout
+
+
+def test_dark_theme_contrast_override_and_more_focus_present():
+    html = _extract_inline_script()  # script only; CSS lives in the same file
+    from src.tests.test_copy_trading_positions_live_paper_js_logic import INDEX_HTML
+    page = INDEX_HTML.read_text(encoding="utf-8")
+    assert '[data-theme="dark"] .skip-class-neutral' in page
+    assert '[data-theme="dark"] .copy-skip-key' in page
+    assert "target.focus()" in html
