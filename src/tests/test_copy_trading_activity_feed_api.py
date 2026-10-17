@@ -195,6 +195,16 @@ class TestActivityFeedEndpoint:
         assert e["market"] is None
         assert e["signal_id"] is None
 
+    def test_wallet_paused_event_exposes_paused_by(self, api_client):
+        """Issue #1403: origin is exposed; legacy (unset) is None."""
+        client, db = api_client
+        db.insert_followed_wallet(address="0xW1", stake_per_trade=5.0, added_at="2026-08-01T00:00:00Z")
+        db.update_followed_wallet_status("0xW1", "paused", "roi", paused_by="health_job")
+        _pause_wallet(db, "0xW2", paused_at="2026-09-03T00:00:00Z")
+        by_addr = {e["address"]: e for e in client.get("/api/copy-trading/activity-feed").json()["events"]}
+        assert by_addr["0xW1"]["paused_by"] == "health_job"
+        assert by_addr["0xW2"]["paused_by"] is None
+
     def test_active_followed_wallet_produces_no_pause_event(self, api_client):
         client, db = api_client
         db.insert_followed_wallet(address="0xActive", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")

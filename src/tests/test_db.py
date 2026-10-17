@@ -2223,6 +2223,22 @@ class TestCopyWalletsFollowed:
         assert row["live_enabled"] == 0
         assert row["live_enabled_cleared_at"] is not None  # history survives resume
 
+    def test_pause_records_paused_by_and_resume_clears_it(self):
+        db = _db()
+        db.insert_followed_wallet(**self._followed_kwargs())
+        assert db.get_followed_wallets()[0]["paused_by"] is None
+        db.update_followed_wallet_status("0xabc", "paused", "x", paused_by="health_job")
+        assert db.get_followed_wallets()[0]["paused_by"] == "health_job"
+        db.update_followed_wallet_status("0xabc", "active")
+        assert db.get_followed_wallets()[0]["paused_by"] is None
+
+    def test_repause_without_origin_does_not_keep_stale_paused_by(self):
+        db = _db()
+        db.insert_followed_wallet(**self._followed_kwargs())
+        db.update_followed_wallet_status("0xabc", "paused", "x", paused_by="health_job")
+        db.update_followed_wallet_status("0xabc", "paused", "y")
+        assert db.get_followed_wallets()[0]["paused_by"] is None
+
     def test_resume_clears_paused_at(self):
         db = _db()
         db.insert_followed_wallet(**self._followed_kwargs())
@@ -2473,6 +2489,8 @@ class TestCopyWalletsFollowed:
                 assert rows[0]["address"] == "0xlegacy"
                 assert rows[0]["paused_reason"] == "old data"
                 assert rows[0]["paused_at"] is None  # NULL for rows written before migration
+                assert "paused_by" in col_names  # issue #1403
+                assert rows[0]["paused_by"] is None
             finally:
                 db.close()
         finally:

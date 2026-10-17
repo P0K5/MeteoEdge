@@ -425,7 +425,9 @@ def run_once(db=None) -> dict:
 
         reason = _stability_pause_reason(db, address)
         if reason is not None:
-            db.update_followed_wallet_status(address, "paused", reason)
+            db.update_followed_wallet_status(
+                address, "paused", reason, paused_by="health_job"
+            )
             n_paused_stability += 1
             log.info(
                 "[copy_wallet_health] paused %s: reason=%s", address, reason,
@@ -434,7 +436,9 @@ def run_once(db=None) -> dict:
 
         reason = _realized_pnl_pause_reason(db, address)
         if reason is not None:
-            db.update_followed_wallet_status(address, "paused", reason)
+            db.update_followed_wallet_status(
+                address, "paused", reason, paused_by="health_job"
+            )
             n_paused_roi += 1
             log.info(
                 "[copy_wallet_health] paused %s: reason=%s", address, reason,

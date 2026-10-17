@@ -8978,6 +8978,12 @@ function _copyActivityModeBadgeHtml(e) {
   return `<span class="mode-badge ${cls}" aria-label="${aria}">${text}</span>`;
 }
 
+// Issue #1403: "auto-paused" only for a health-job pause; any other or
+// unrecognised/absent origin stays neutral (never claim "auto").
+function _copyActivityPausedWord(e) {
+  return e.paused_by === 'health_job' ? 'Wallet auto-paused' : 'Wallet paused';
+}
+
 function _copyActivityDescriptionHtml(e) {
   // Paper events: relabeled per the design spec so the row's text alone
   // (independent of the badge/border) also states "(paper)" explicitly --
@@ -8993,12 +8999,15 @@ function _copyActivityDescriptionHtml(e) {
   }
   if (e.event_type === 'wallet_paused') {
     const base = e.paused_reason ? _copyEscapeHtml(e.paused_reason) : 'No reason given';
+    // Issue #1403: only a health-job pause is "auto-paused"; cli/dashboard/
+    // legacy/unknown origins stay neutral.
+    const pausedWord = _copyActivityPausedWord(e);
     // Issue #1264: a pause that also revoked the live opt-in is flagged with
     // the warning icon (it stays mode=paper, so a Live filter would miss it).
     if (e.live_optin_revoked) {
-      return `<span class="copy-activity-desc"><i data-lucide="alert-triangle" aria-hidden="true"></i> Wallet paused — ${base}. Live trading opt-in was revoked.</span>`;
+      return `<span class="copy-activity-desc"><i data-lucide="alert-triangle" aria-hidden="true"></i> ${pausedWord} — ${base}. Live trading opt-in was revoked.</span>`;
     }
-    return `<span class="copy-activity-desc">Wallet paused — ${base}</span>`;
+    return `<span class="copy-activity-desc">${pausedWord} — ${base}</span>`;
   }
   // Live events (issue #1188) -- market + stage-specific detail; the
   // reason text (skip_reason/rejected_reason) already arrives plain-
@@ -9063,7 +9072,8 @@ function _copyActivityItemHtml(e) {
   // fixed label instead of an empty/truncated address.
   const addrLabel = kind === 'none' ? 'Live CLOB wallet' : _copyTruncateAddress(e.address);
   const revokedSuffix = e.live_optin_revoked ? ', live trading opt-in revoked' : '';
-  const ariaLabel = kind === 'none' ? label : `${label} for ${addrEsc}${revokedSuffix}, click to view wallet detail`;
+  const ariaWord = e.event_type === 'wallet_paused' ? _copyActivityPausedWord(e) : label;
+  const ariaLabel = kind === 'none' ? label : `${ariaWord} for ${addrEsc}${revokedSuffix}, click to view wallet detail`;
   return `
     <div class="copy-activity-item ${modeCls}" role="button" tabindex="0"
          data-kind="${kind}" data-address="${addrEsc}"
