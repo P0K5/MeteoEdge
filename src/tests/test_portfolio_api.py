@@ -700,6 +700,91 @@ class TestPortfolioHistoryDecoupling:
 
 
 # ---------------------------------------------------------------------------
+# /api/portfolio/history — issue #1457: history/wallet-fetch latency decoupling
+# ---------------------------------------------------------------------------
+
+class TestPortfolioHistoryEndpoint:
+    """GET /api/portfolio/history is a standalone endpoint built from the
+    same network-free helper /api/portfolio uses for its closed_positions
+    field (issue #814's _closed_positions_from_jsonl_and_db()), so the
+    frontend can poll it independently of the slower wallet fetch."""
+
+    def test_returns_200_with_expected_keys(self):
+        from src.dashboard import api
+
+        with patch.object(api, "_closed_positions_from_jsonl_and_db",
+                           return_value=([], {}, set(), set())):
+            client = TestClient(api.app)
+            resp = client.get("/api/portfolio/history")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        for key in ("closed_positions", "updated_at"):
+            assert key in data, f"Missing key: {key}"
+
+    def test_shape_matches_portfolio_closed_positions_field(self):
+        """Same ClosedPositionOut shape as /api/portfolio's closed_positions
+        (AC: no new/renamed fields, so the frontend merge-by-token_id logic
+        in #1457's frontend half can treat both lists interchangeably)."""
+        from src.dashboard import api
+        from src.dashboard.api import ClosedPositionOut
+
+        history = [
+            ClosedPositionOut(
+                station="KLAX", side="NO", entry_price=40, exit_price=0,
+                pnl=-12.0, shares=30.0, closed_at="2026-10-01T00:00:00+00:00",
+                token_id="tok-history", exit_reason="lost",
+            ),
+        ]
+        history_mock = MagicMock(return_value=(history, {}, set(), set()))
+
+        with patch.object(api, "_closed_positions_from_jsonl_and_db", history_mock):
+            client = TestClient(api.app)
+            resp = client.get("/api/portfolio/history")
+
+        assert resp.status_code == 200
+        data = resp.json()["closed_positions"]
+        assert len(data) == 1
+        assert data[0]["token_id"] == "tok-history"
+        assert data[0]["pnl"] == pytest.approx(-12.0)
+        history_mock.assert_called_once()
+
+    def test_makes_no_external_network_calls(self):
+        """Core AC: this endpoint's code path must never touch the wallet,
+        CLOB, or NWS APIs, so it stays fast regardless of how slow/flaky
+        those are -- that's the actual latency decoupling #1457 wants.
+        Verified by making every external-call entry point raise if hit."""
+        from src.dashboard import api
+
+        def _boom(*_a, **_kw):
+            raise AssertionError("unexpected external network call")
+
+        with patch("httpx.get", side_effect=_boom), \
+             patch("src.execution.auth.get_clob_client", side_effect=_boom), \
+             patch.object(api, "_cash_usdc", side_effect=_boom), \
+             patch.object(api, "_positions_from_wallet", side_effect=_boom):
+            client = TestClient(api.app)
+            resp = client.get("/api/portfolio/history")
+
+        assert resp.status_code == 200
+
+    def test_does_not_affect_portfolio_endpoint_response_shape(self):
+        """AC: /api/portfolio's existing response shape/behavior is unchanged
+        by the new endpoint's addition."""
+        from src.dashboard import api
+
+        with patch.object(api, "_db", None):
+            with patch.object(api, "_cash_usdc", return_value=42.0):
+                client = TestClient(api.app)
+                resp = client.get("/api/portfolio")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        for key in ("cash_usdc", "open_positions", "closed_positions", "updated_at"):
+            assert key in data, f"Missing key: {key}"
+
+
+# ---------------------------------------------------------------------------
 # NWS forecast lookups — issue #814: process-level TTL cache across requests
 # ---------------------------------------------------------------------------
 
