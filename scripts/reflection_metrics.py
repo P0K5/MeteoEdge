@@ -10,6 +10,13 @@ into transcript JSONL. Completed issues are counted from closing keywords
 ("Closes #N" / "Fixes #N" / "Resolves #N") seen in the transcript; pass
 --issues to override when the heuristic miscounts.
 
+Billing is backend-aware per turn (issue #931): Anthropic models report
+`input_tokens` as the uncached-only portion of the prompt (cache_creation is
+additive on top), while other backends run through this repo (e.g. DeepSeek
+via the NVIDIA NIM proxy) report `input_tokens` as the *total* prompt, with
+cache_creation/cache_read as a breakdown of that same total. See
+`classify_backend` / `billed_for_usage` below.
+
 Usage:
   python scripts/reflection_metrics.py <sanitized.jsonl> [...] \
       [--issues N] [--append docs/reflection/metrics.jsonl] [--label "epic-12"]
@@ -24,6 +31,50 @@ from pathlib import Path
 CLOSING_RE = re.compile(r"\b(?:closes|fixes|resolves)\s+#(\d+)", re.IGNORECASE)
 USAGE_KEYS = ("input_tokens", "output_tokens",
               "cache_creation_input_tokens", "cache_read_input_tokens")
+
+# Model-name prefix for backends that use Anthropic's native usage-accounting
+# convention: `input_tokens` is the uncached-prompt portion only, and
+# `cache_creation_input_tokens` / `cache_read_input_tokens` are reported
+# separately on top of it (additive). Confirmed against real transcripts:
+# claude-opus-5 turns show input_tokens=2 alongside cache_creation=49490.
+#
+# Non-Anthropic backends run through this repo (e.g. DeepSeek via the
+# NVIDIA NIM proxy, model "deepseek-v4-pro") instead report `input_tokens`
+# as the *total* prompt size, with cache_creation/cache_read as a breakdown
+# of that same total: confirmed against real transcripts, e.g.
+# input_tokens=44221 == cache_creation_input_tokens(829) +
+# cache_read_input_tokens(43392). Adding cache_creation back on top of that
+# total double-counts it (issue #931) -- it must be dropped for this
+# backend class instead.
+ANTHROPIC_MODEL_RE = re.compile(r"^claude[-.]", re.IGNORECASE)
+
+
+def classify_backend(model):
+    """Classify a transcript `model` field as 'anthropic' or 'other'.
+
+    Defaults to 'anthropic' when model is missing/unknown, preserving this
+    script's original (Anthropic-only) behavior for older transcripts and
+    for test fixtures that omit the field.
+    """
+    if isinstance(model, str) and ANTHROPIC_MODEL_RE.match(model):
+        return "anthropic"
+    if model:
+        return "other"
+    return "anthropic"
+
+
+def billed_for_usage(usage, backend):
+    """Billed tokens for one usage record, backend-aware (issue #931)."""
+    input_t = usage.get("input_tokens") or 0
+    output_t = usage.get("output_tokens") or 0
+    cache_creation = usage.get("cache_creation_input_tokens") or 0
+    if backend == "other":
+        # input_tokens already equals cache_creation + cache_read here --
+        # adding cache_creation again would double-count it.
+        return input_t + output_t
+    # Anthropic: cache reads are cheap and dropped; cache_creation is a
+    # real, separate cost on top of the uncached input.
+    return input_t + output_t + cache_creation
 
 
 def walk(value):
@@ -41,6 +92,8 @@ def analyze_file(path):
     totals = {k: 0 for k in USAGE_KEYS}
     issues = set()
     turns = 0
+    billed = 0
+    backend_counts = {}
     with open(path, encoding="utf-8") as fin:
         for line in fin:
             line = line.strip()
@@ -52,14 +105,23 @@ def analyze_file(path):
                 continue
             turns += 1
             for d in walk(record):
-                if "input_tokens" in d or "output_tokens" in d:
-                    for k in USAGE_KEYS:
-                        v = d.get(k)
-                        if isinstance(v, int):
-                            totals[k] += v
+                if not isinstance(d, dict):
+                    continue
+                usage = d.get("usage")
+                if not isinstance(usage, dict):
+                    continue
+                if "input_tokens" not in usage and "output_tokens" not in usage:
+                    continue
+                for k in USAGE_KEYS:
+                    v = usage.get(k)
+                    if isinstance(v, int):
+                        totals[k] += v
+                backend = classify_backend(d.get("model"))
+                backend_counts[backend] = backend_counts.get(backend, 0) + 1
+                billed += billed_for_usage(usage, backend)
             for m in CLOSING_RE.finditer(line):
                 issues.add(int(m.group(1)))
-    return totals, issues, turns
+    return totals, issues, turns, billed, backend_counts
 
 
 def main():
@@ -77,20 +139,27 @@ def main():
     grand = {k: 0 for k in USAGE_KEYS}
     all_issues = set()
     n_turns = 0
+    billed = 0
+    backends = {}
     for name in args.transcripts:
-        totals, issues, turns = analyze_file(Path(name))
+        totals, issues, turns, file_billed, file_backends = analyze_file(Path(name))
         for k in USAGE_KEYS:
             grand[k] += totals[k]
         all_issues |= issues
         n_turns += turns
+        billed += file_billed
+        for b, c in file_backends.items():
+            backends[b] = backends.get(b, 0) + c
         print(f"[metrics] {Path(name).name}: turns={turns} "
               f"in={totals['input_tokens']} out={totals['output_tokens']} "
-              f"cache_r={totals['cache_read_input_tokens']} issues={sorted(issues)}")
+              f"cache_r={totals['cache_read_input_tokens']} "
+              f"backend={file_backends} issues={sorted(issues)}")
 
     issue_count = args.issues if args.issues is not None else len(all_issues)
-    # Cache reads are cheap; the cost driver is uncached input + output.
-    billed = grand["input_tokens"] + grand["output_tokens"] \
-        + grand["cache_creation_input_tokens"]
+    # billed is computed per-turn with the backend-correct formula (#931) --
+    # it is NOT grand['input_tokens'] + output + cache_creation, because
+    # that single formula is only valid when every turn in the batch used
+    # the same backend convention.
     per_issue = round(billed / issue_count) if issue_count else None
 
     entry = {
@@ -99,6 +168,7 @@ def main():
         "transcripts": [Path(n).name for n in args.transcripts],
         "turns": n_turns,
         "usage": grand,
+        "backends": backends,
         "billed_tokens": billed,
         "issues_completed": issue_count,
         "issue_numbers": sorted(all_issues),

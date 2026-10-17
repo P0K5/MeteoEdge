@@ -710,6 +710,56 @@ class Database:
         self._conn.commit()
         self._migrate()
 
+    def _rebuild_trades_table(self, column_defs: str, select_columns: str) -> None:
+        """Rebuild the `trades` table against a new target schema.
+
+        SQLite cannot ALTER a CHECK constraint, widen a CHECK's allowed
+        values, or drop a column in place, so every `trades` migration that
+        needs one of those follows the same create-trades_new /
+        copy-matching-columns / drop-old / rename-new dance. Issue #1084:
+        this used to be two separate bespoke blocks (the mode CHECK
+        'shadow' upgrade and the actual_fee_cents→estimated_fee_cents
+        rename) that only differed in their target schema and SELECT list
+        — unified here so a third schema change doesn't bolt on a third copy.
+
+        Takes `self._lock` itself (it's an RLock, so this nests safely when
+        called from within `_migrate`, which already holds it — issue #1335
+        requires every `self._conn` access to be lexically guarded by
+        `with self._lock:` in its own function, not just transitively via a
+        locked caller). Temporarily disables FK checks because
+        `open_positions.trade_id` has a foreign key into `trades(id)` that
+        would otherwise reject the `DROP TABLE trades` below, and recreates
+        the two indexes every rebuild drops along with the table.
+
+        Args:
+            column_defs: the full column-definition body for
+                `CREATE TABLE trades_new (...)` — caller-specific per
+                migration (the target schema being migrated to).
+            select_columns: comma-separated column list/expressions for
+                `INSERT INTO trades_new SELECT <select_columns> FROM trades`,
+                positional and in the same order as `column_defs`.
+        """
+        with self._lock:
+            self._conn.execute("PRAGMA foreign_keys=OFF")
+            try:
+                with self._conn:
+                    self._conn.execute("DROP TABLE IF EXISTS trades_new")
+                    self._conn.execute(f"CREATE TABLE trades_new (\n{column_defs}\n)")
+                    self._conn.execute(
+                        f"INSERT INTO trades_new SELECT {select_columns} FROM trades"
+                    )
+                    self._conn.execute("DROP TABLE trades")
+                    self._conn.execute("ALTER TABLE trades_new RENAME TO trades")
+                    self._conn.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_trades_station_ts "
+                        "ON trades(station, ts)"
+                    )
+                    self._conn.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_trades_mode ON trades(mode)"
+                    )
+            finally:
+                self._conn.execute("PRAGMA foreign_keys=ON")
+
     def _migrate(self) -> None:
         """Run idempotent schema migrations."""
         with self._lock:
@@ -1101,83 +1151,61 @@ class Database:
                 "SELECT sql FROM sqlite_master WHERE type='table' AND name='trades'"
             ).fetchone()
             if row and "'shadow'" not in row[0]:
-                # Temporarily disable FK checks so the DROP TABLE does not violate
-                # the open_positions.trade_id → trades(id) foreign key.
-                self._conn.execute("PRAGMA foreign_keys=OFF")
-                try:
-                    with self._conn:
-                        self._conn.execute("DROP TABLE IF EXISTS trades_new")
-                        self._conn.execute(
-                            """
-                        CREATE TABLE trades_new (
-                            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                            ts              TEXT NOT NULL,
-                            station         TEXT NOT NULL,
-                            ticker          TEXT NOT NULL,
-                            bracket_low     REAL NOT NULL,
-                            bracket_high    REAL NOT NULL,
-                            side            TEXT NOT NULL CHECK(side IN ('YES','NO')),
-                            predicted_price INTEGER NOT NULL,
-                            actual_price    INTEGER NOT NULL,
-                            slippage        INTEGER,
-                            predicted_edge  REAL NOT NULL,
-                            mode            TEXT NOT NULL CHECK(mode IN ('paper','live','shadow')),
-                            order_id        TEXT,
-                            outcome         TEXT,
-                            pnl             REAL,
-                            capital_before  REAL NOT NULL,
-                            capital_after   REAL,
-                            settled_at      TEXT,
-                            estimated_fee_cents REAL,
-                            size_eur        REAL,
-                            direction       TEXT NOT NULL DEFAULT 'high',
-                            p_yes_raw       REAL,
-                            end_date        TEXT
-                        )
-                        """
-                        )
-                        # direction/p_yes_raw/end_date/estimated_fee_cents may not exist in old table — coalesce
-                        old_cols_q = self._conn.execute(
-                            "PRAGMA table_info(trades)"
-                        ).fetchall()
-                        old_col_names = {r[1] for r in old_cols_q}
-                        direction_expr = (
-                            "direction" if "direction" in old_col_names else "'high'"
-                        )
-                        p_yes_raw_expr = (
-                            "p_yes_raw" if "p_yes_raw" in old_col_names else "NULL"
-                        )
-                        end_date_expr = (
-                            "end_date" if "end_date" in old_col_names else "NULL"
-                        )
-                        # Migration: rename actual_fee_cents → estimated_fee_cents if old table has it
-                        if "estimated_fee_cents" in old_col_names:
-                            fee_expr = "estimated_fee_cents"
-                        elif "actual_fee_cents" in old_col_names:
-                            fee_expr = "actual_fee_cents"
-                        else:
-                            fee_expr = "NULL"
-                        self._conn.execute(
-                            "INSERT INTO trades_new SELECT "
-                            "id,ts,station,ticker,bracket_low,bracket_high,side,"
-                            "predicted_price,actual_price,slippage,predicted_edge,mode,"
-                            "order_id,outcome,pnl,capital_before,capital_after,settled_at,"
-                            f"{fee_expr},size_eur,{direction_expr},{p_yes_raw_expr},{end_date_expr} "
-                            "FROM trades"
-                        )
-                        self._conn.execute("DROP TABLE trades")
-                        self._conn.execute(
-                            "ALTER TABLE trades_new RENAME TO trades"
-                        )
-                        self._conn.execute(
-                            "CREATE INDEX IF NOT EXISTS idx_trades_station_ts "
-                            "ON trades(station, ts)"
-                        )
-                        self._conn.execute(
-                            "CREATE INDEX IF NOT EXISTS idx_trades_mode ON trades(mode)"
-                        )
-                finally:
-                    self._conn.execute("PRAGMA foreign_keys=ON")
+                # direction/p_yes_raw/end_date/estimated_fee_cents may not exist in old table — coalesce
+                old_col_names = {
+                    r[1] for r in self._conn.execute(
+                        "PRAGMA table_info(trades)"
+                    ).fetchall()
+                }
+                direction_expr = (
+                    "direction" if "direction" in old_col_names else "'high'"
+                )
+                p_yes_raw_expr = (
+                    "p_yes_raw" if "p_yes_raw" in old_col_names else "NULL"
+                )
+                end_date_expr = (
+                    "end_date" if "end_date" in old_col_names else "NULL"
+                )
+                # Migration: rename actual_fee_cents → estimated_fee_cents if old table has it
+                if "estimated_fee_cents" in old_col_names:
+                    fee_expr = "estimated_fee_cents"
+                elif "actual_fee_cents" in old_col_names:
+                    fee_expr = "actual_fee_cents"
+                else:
+                    fee_expr = "NULL"
+                self._rebuild_trades_table(
+                    column_defs="""
+                        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                        ts              TEXT NOT NULL,
+                        station         TEXT NOT NULL,
+                        ticker          TEXT NOT NULL,
+                        bracket_low     REAL NOT NULL,
+                        bracket_high    REAL NOT NULL,
+                        side            TEXT NOT NULL CHECK(side IN ('YES','NO')),
+                        predicted_price INTEGER NOT NULL,
+                        actual_price    INTEGER NOT NULL,
+                        slippage        INTEGER,
+                        predicted_edge  REAL NOT NULL,
+                        mode            TEXT NOT NULL CHECK(mode IN ('paper','live','shadow')),
+                        order_id        TEXT,
+                        outcome         TEXT,
+                        pnl             REAL,
+                        capital_before  REAL NOT NULL,
+                        capital_after   REAL,
+                        settled_at      TEXT,
+                        estimated_fee_cents REAL,
+                        size_eur        REAL,
+                        direction       TEXT NOT NULL DEFAULT 'high',
+                        p_yes_raw       REAL,
+                        end_date        TEXT
+                    """,
+                    select_columns=(
+                        "id,ts,station,ticker,bracket_low,bracket_high,side,"
+                        "predicted_price,actual_price,slippage,predicted_edge,mode,"
+                        "order_id,outcome,pnl,capital_before,capital_after,settled_at,"
+                        f"{fee_expr},size_eur,{direction_expr},{p_yes_raw_expr},{end_date_expr}"
+                    ),
+                )
 
             # Migration: drop the scan_decisions.gate_verdict CHECK constraint
             # (issue #912). SQLite cannot ALTER a CHECK in place -- requires a
@@ -1300,65 +1328,44 @@ class Database:
                         "WHERE estimated_fee_cents IS NULL AND actual_fee_cents IS NOT NULL"
                     )
                     # Now rebuild the table to drop actual_fee_cents
-                    self._conn.execute("PRAGMA foreign_keys=OFF")
-                    try:
-                        with self._conn:
-                            self._conn.execute("DROP TABLE IF EXISTS trades_new")
-                            self._conn.execute(
-                                """
-                            CREATE TABLE trades_new (
-                                id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                                ts              TEXT NOT NULL,
-                                station         TEXT NOT NULL,
-                                ticker          TEXT NOT NULL,
-                                bracket_low     REAL NOT NULL,
-                                bracket_high    REAL NOT NULL,
-                                side            TEXT NOT NULL CHECK(side IN ('YES','NO')),
-                                predicted_price INTEGER NOT NULL,
-                                actual_price    INTEGER NOT NULL,
-                                slippage        INTEGER,
-                                predicted_edge  REAL NOT NULL,
-                                mode            TEXT NOT NULL CHECK(mode IN ('paper','live','shadow')),
-                                order_id        TEXT,
-                                outcome         TEXT,
-                                pnl             REAL,
-                                capital_before  REAL NOT NULL,
-                                capital_after   REAL,
-                                settled_at      TEXT,
-                                estimated_fee_cents REAL,
-                                size_eur        REAL,
-                                close_reason    TEXT,
-                                minutes_to_settlement_at_close REAL,
-                                bid_depth_at_close INTEGER,
-                                direction       TEXT NOT NULL DEFAULT 'high',
-                                p_yes_raw       REAL,
-                                end_date        TEXT,
-                                is_next_day     INTEGER NOT NULL DEFAULT 0
-                            )
-                            """
-                            )
-                            self._conn.execute(
-                                "INSERT INTO trades_new SELECT "
-                                "id,ts,station,ticker,bracket_low,bracket_high,side,"
-                                "predicted_price,actual_price,slippage,predicted_edge,mode,"
-                                "order_id,outcome,pnl,capital_before,capital_after,settled_at,"
-                                "estimated_fee_cents,size_eur,close_reason,minutes_to_settlement_at_close,"
-                                "bid_depth_at_close,direction,p_yes_raw,end_date,is_next_day "
-                                "FROM trades"
-                            )
-                            self._conn.execute("DROP TABLE trades")
-                            self._conn.execute(
-                                "ALTER TABLE trades_new RENAME TO trades"
-                            )
-                            self._conn.execute(
-                                "CREATE INDEX IF NOT EXISTS idx_trades_station_ts "
-                                "ON trades(station, ts)"
-                            )
-                            self._conn.execute(
-                                "CREATE INDEX IF NOT EXISTS idx_trades_mode ON trades(mode)"
-                            )
-                    finally:
-                        self._conn.execute("PRAGMA foreign_keys=ON")
+                    self._rebuild_trades_table(
+                        column_defs="""
+                            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                            ts              TEXT NOT NULL,
+                            station         TEXT NOT NULL,
+                            ticker          TEXT NOT NULL,
+                            bracket_low     REAL NOT NULL,
+                            bracket_high    REAL NOT NULL,
+                            side            TEXT NOT NULL CHECK(side IN ('YES','NO')),
+                            predicted_price INTEGER NOT NULL,
+                            actual_price    INTEGER NOT NULL,
+                            slippage        INTEGER,
+                            predicted_edge  REAL NOT NULL,
+                            mode            TEXT NOT NULL CHECK(mode IN ('paper','live','shadow')),
+                            order_id        TEXT,
+                            outcome         TEXT,
+                            pnl             REAL,
+                            capital_before  REAL NOT NULL,
+                            capital_after   REAL,
+                            settled_at      TEXT,
+                            estimated_fee_cents REAL,
+                            size_eur        REAL,
+                            close_reason    TEXT,
+                            minutes_to_settlement_at_close REAL,
+                            bid_depth_at_close INTEGER,
+                            direction       TEXT NOT NULL DEFAULT 'high',
+                            p_yes_raw       REAL,
+                            end_date        TEXT,
+                            is_next_day     INTEGER NOT NULL DEFAULT 0
+                        """,
+                        select_columns=(
+                            "id,ts,station,ticker,bracket_low,bracket_high,side,"
+                            "predicted_price,actual_price,slippage,predicted_edge,mode,"
+                            "order_id,outcome,pnl,capital_before,capital_after,settled_at,"
+                            "estimated_fee_cents,size_eur,close_reason,minutes_to_settlement_at_close,"
+                            "bid_depth_at_close,direction,p_yes_raw,end_date,is_next_day"
+                        ),
+                    )
                 else:
                     # Only actual_fee_cents exists (very old DB) — just rename via ADD
                     self._conn.execute("ALTER TABLE trades ADD COLUMN estimated_fee_cents REAL")

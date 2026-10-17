@@ -499,6 +499,12 @@ class CopyCandidateOut(BaseModel):
     # gates the Follow button, the other drives the warning badge) even
     # though they're computed from the same two rows.
     unstable: bool
+    # Reason code for instability (issue #1309): distinguishes a wallet
+    # whose last two runs genuinely disagree on sign/volume from one whose
+    # runs are simply too far apart in time to compare meaningfully.
+    # One of: "first_run", "median_roi_missing", "stale_comparison",
+    # "sign_mismatch", "volume_swing", or "ok" (from check_stability()).
+    stability_reason: str
     # Whether this wallet has a screening run before its latest one
     # (Designer review, PR #1152): a first-ever run has nothing to have
     # "swung" against yet, so `unstable` is conservatively True but the
@@ -2952,19 +2958,10 @@ _CANDIDATE_PY_SORTS = ("followed", "unstable")
 def _candidate_out(row, previous, followed_status) -> "CopyCandidateOut":
     """Build one candidate row. Reuses check_stability() against the wallet's
     own last two runs rather than re-deriving the sign/tolerance logic.
-
-    Note (issue #1298): check_stability() now also returns `unstable=True`
-    when the two rows are too far apart in time to compare at all
-    (reason="stale_comparison") -- this badge does not yet distinguish that
-    case from a proven sign/volume disagreement. Acceptable here because
-    this field only drives an advisory dashboard warning, not an auto-pause
-    decision (unlike copy_wallet_health.py's _stability_pause_reason, which
-    does make that distinction); left as a known limitation rather than
-    widened scope for this backend fix.
     """
     from src.scripts.copy_wallet_screening import check_stability
 
-    stable, _reason = check_stability(row, previous)
+    stable, reason = check_stability(row, previous)
     return CopyCandidateOut(
         address=row["address"],
         window=row["window"],
@@ -2979,6 +2976,7 @@ def _candidate_out(row, previous, followed_status) -> "CopyCandidateOut":
         flat_stake=row["flat_stake"],
         eligible_to_follow=bool(row["eligible_to_follow"]),
         unstable=not stable,
+        stability_reason=reason,
         has_prior_run=previous is not None,
         truncated=bool(row["truncated"]),
         followed=row["address"] in followed_status,

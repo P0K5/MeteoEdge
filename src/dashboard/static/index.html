@@ -5307,9 +5307,43 @@ function _copyStabilityBadgeHtml(candidate) {
   if (!candidate.has_prior_run) {
     return `<span class="badge-stable"><i data-lucide="hourglass"></i>New</span>`;
   }
+  // Issue #1309 (Designer review): stability_reason="stale_comparison" means
+  // the wallet's last two runs are simply too far apart in time to compare
+  // at all (STABILITY_MAX_COMPARISON_GAP_HOURS, check_stability() in
+  // copy_wallet_screening.py) -- a refusal to evaluate, not a disagreement.
+  // This wallet may well be perfectly stable; there's just no fresh-enough
+  // comparison to say so. Coloring/labeling this the same as a genuine
+  // sign/volume disagreement (as an earlier draft of this function did) would
+  // read as a proven defect when none has been shown -- the same "don't
+  // claim proof you don't have" rule already applied to has_prior_run above,
+  // so this reuses .badge-stable's neutral treatment too, with its own
+  // icon/label so it's never confused with "Stable" (confirmed agreement)
+  // either. Per the issue's own third acceptance criterion, first_run
+  // (above) and median_roi_missing (below, folded into the plain "Unstable"
+  // branch) are deliberately NOT given this new treatment -- they keep their
+  // pre-#1309 behavior unchanged.
+  if (candidate.stability_reason === 'stale_comparison') {
+    return `<span class="badge-stable" title="This wallet's last two screening runs are too far apart in time to compare -- it was out of the screening pool for a while. This is not proof of a problem, and it resolves automatically on the wallet's next run.">
+      <i data-lucide="clock"></i>Stale</span>`;
+  }
   return candidate.unstable
-    ? `<span class="badge-unstable"><i data-lucide="alert-triangle"></i>Unstable</span>`
+    ? `<span class="badge-unstable" title="${_copyUnstableReasonTitle(candidate.stability_reason)}"><i data-lucide="alert-triangle"></i>Unstable</span>`
     : `<span class="badge-stable"><i data-lucide="check-circle"></i>Stable</span>`;
+}
+
+function _copyUnstableReasonTitle(reason) {
+  // Reason-specific detail for the "Unstable" badge's title -- these three
+  // reasons are all proven problems (unlike stale_comparison above), so they
+  // share one badge/label per the issue's third acceptance criterion, but
+  // the tooltip still says which specific check failed.
+  if (reason === 'median_roi_missing') {
+    return "This wallet's current or previous screening run has no usable ROI data (zero resolved trades), so stability can't be confirmed.";
+  }
+  if (reason === 'volume_swing') {
+    return "This wallet's resolved trade volume swung by more than 25% between its last two screening runs.";
+  }
+  // sign_mismatch (or any future/unrecognized reason, conservative default).
+  return "This wallet's last two screening runs disagree on whether its median ROI was positive or negative.";
 }
 
 function _copyTruncatedBadgeHtml(candidate) {
@@ -5565,9 +5599,18 @@ function _copyFollowSectionHtml(address, candidate, runCount) {
     // Adapt the explanation to the actual reason available (design decision):
     // a wallet with only one screening run ever hasn't been *proven*
     // unstable, it just hasn't had a second run to confirm stability yet.
-    const reason = runCount < 2
-      ? 'Not yet eligible — needs a second screening run to confirm stability.'
-      : "Unstable — latest re-screen did not reproduce the previous run's result.";
+    // Issue #1309: a stale_comparison gap is likewise not proof of a
+    // problem -- same rule as the Stability column's "Stale" badge above --
+    // so it gets its own wording here too rather than falling into the
+    // generic "Unstable" sentence.
+    let reason;
+    if (runCount < 2) {
+      reason = 'Not yet eligible — needs a second screening run to confirm stability.';
+    } else if (candidate.stability_reason === 'stale_comparison') {
+      reason = "Not yet eligible — the last two screening runs are too far apart in time to compare. This isn't proof of a problem; it resolves on the wallet's next run.";
+    } else {
+      reason = "Unstable — latest re-screen did not reproduce the previous run's result.";
+    }
     return `
       <button type="button" class="btn-follow" disabled aria-label="Follow unavailable — ${reason}" title="${reason}">
         <i data-lucide="user-plus"></i>Follow
