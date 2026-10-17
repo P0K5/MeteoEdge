@@ -97,6 +97,26 @@ a,button,input,select{transition:color var(--transition),background var(--transi
   scroll-padding-inline:var(--space-6);
   position:sticky;top:58px;z-index:49;
 }
+/* Dark theme: scroll affordance fade using Lea Verou's pattern
+   (https://lea.verou.me/blog/2012/04/background-attachment-local/)
+   Layer 1 (local): cover gradient (solid surface fading to transparent at right)
+     — positioned at right edge of scrollable content, moves with scroll
+   Layer 2 (scroll): shadow gradient (transparent fading to white overlay)
+     — pinned to viewport right edge, always visible until covered by layer 1
+*/
+[data-theme="dark"] .tab-bar{
+  background:
+    linear-gradient(to left, var(--surface) 30%, transparent) right / 40px 100% no-repeat local,
+    linear-gradient(to left, rgba(255,255,255,0.15), transparent) right / 40px 100% no-repeat scroll,
+    var(--surface);
+}
+/* Light theme: scroll affordance fade using Lea Verou's pattern */
+[data-theme="light"] .tab-bar{
+  background:
+    linear-gradient(to left, var(--surface) 30%, transparent) right / 40px 100% no-repeat local,
+    linear-gradient(to left, rgba(0,0,0,0.15), transparent) right / 40px 100% no-repeat scroll,
+    var(--surface);
+}
 .tab-btn{
   height:100%;padding:0 var(--space-4);white-space:nowrap;flex-shrink:0;
   border:none;background:none;color:var(--muted);
