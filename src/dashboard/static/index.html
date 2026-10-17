@@ -90,7 +90,11 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 
 /* ── TAB BAR ── */
 .tab-bar{
-  background:var(--surface);border-bottom:1px solid var(--border);
+  background:
+    linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.15) 100%) right 0 / 40px 100% no-repeat,
+    var(--surface);
+  background-attachment:local,local;
+  border-bottom:1px solid var(--border);
   padding:0 var(--space-6);height:52px;
   display:flex;flex-wrap:nowrap;align-items:center;gap:var(--space-6);
   overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;
