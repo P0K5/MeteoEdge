@@ -19,7 +19,7 @@ INDEX_HTML = REPO_ROOT / "src" / "dashboard" / "static" / "index.html"
 
 def test_copy_address_clipboard_function_exists():
     """Verify the copyAddressToClipboard function exists in the HTML."""
-    with open(INDEX_HTML) as f:
+    with open(INDEX_HTML, encoding="utf-8") as f:
         html = f.read()
 
     # Should have the function definition
@@ -29,7 +29,7 @@ def test_copy_address_clipboard_function_exists():
 
 def test_all_six_copy_buttons_have_same_feedback_markup():
     """Structural: every copy button call site ships identical feedback markup."""
-    html = INDEX_HTML.read_text()
+    html = INDEX_HTML.read_text(encoding="utf-8")
 
     buttons = html.count('class="copy-copy-btn"')
     assert buttons == 6, f"expected 6 copy buttons, found {buttons}"
