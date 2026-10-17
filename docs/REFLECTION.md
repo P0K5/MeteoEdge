@@ -68,6 +68,16 @@ proposals — accumulating prompt edits without measured benefit is exactly the
 drift this loop exists to prevent. The pre-restructure baseline lives in
 `docs/reflection/baseline.md`.
 
+`scripts/reflection_metrics.py` bills tokens per-turn with a backend-aware
+formula (issue #931): Anthropic models report `input_tokens` as the
+uncached-only portion of the prompt, while other backends run through this
+repo (e.g. DeepSeek via the NVIDIA NIM proxy) report `input_tokens` as the
+*total* prompt, already inclusive of `cache_creation_input_tokens` and
+`cache_read_input_tokens`. The 2026-07-31 row in `metrics.jsonl` predates
+this fix and mixed both backends — its `billed_tokens` overstates true cost;
+see that row's `"note"` field and issue #931 before using it for a
+before/after comparison.
+
 ## v2 (deferred)
 
 - Per-session automation via a local `SessionEnd` hook firing
