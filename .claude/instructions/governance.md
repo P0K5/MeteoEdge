@@ -109,6 +109,26 @@ Any PR touching UI components, layouts, styles, or user-facing text requires
 **both** Tech Lead PM (technical) and Designer (UX) approval before merge.
 Designer change requests are blockers.
 
+### Designer-authored frontend diffs (issue #1476)
+
+> **Policy wording for user review.** The Designer cannot approve a diff it
+> wrote. When the Designer implemented any part of a frontend PR (not just
+> spec/review), the Designer approval requirement is met only by a **fresh
+> Designer spawn that did not write that code** reviewing the PR diff. The
+> authoring Designer must not approve, comment-approve, or retry another route.
+> The Tech Lead PM approval remains separate and still required. If a fresh
+> spawn is not practical, the PM escalates to the user for an explicit
+> sign-off; an ad hoc PM-only merge is not a valid substitute.
+
+## Same-issue multi-agent spawns (issue #1475)
+
+When the PM spawns more than one agent (e.g. dev + Designer) against the same
+issue or shared branch, each agent must use its own worktree: pass a per-agent
+suffix, `bash scripts/ensure_worktree.sh <shared-branch> "" <agent-name>` (or
+set `ENSURE_WORKTREE_AGENT`). The agent works on `<shared-branch>--<agent-name>`,
+branched from the pushed shared branch when it exists. Integrate by
+rebasing/cherry-picking onto the shared branch; never share one directory.
+
 ## Governance checklist (every agent, every task)
 
 Before considering any task complete, verify:
