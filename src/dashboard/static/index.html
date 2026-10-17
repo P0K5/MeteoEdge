@@ -40,6 +40,7 @@ html{-webkit-font-smoothing:antialiased;scroll-behavior:smooth}
   --warn:#e8a845;--warn-bg:#2a1f08;
   --edge:#b07fe8;--edge-bg:#1e1530;
   --sh-sm:0 1px 3px #00000040;--sh-md:0 4px 16px #00000055;
+  --scroll-fade:#ffffff;--scroll-fade-alpha:0.1;
 }
 [data-theme="light"]{
   --bg:#f0f2f8;--surface:#fff;--surface-2:#f7f8fc;--surface-off:#edf0f8;
@@ -51,6 +52,7 @@ html{-webkit-font-smoothing:antialiased;scroll-behavior:smooth}
   --warn:#8a5309;--warn-bg:#fef0d8;
   --edge:#6040b0;--edge-bg:#ece8f8;
   --sh-sm:0 1px 3px #1820380a;--sh-md:0 4px 16px #1820380f;
+  --scroll-fade:#000000;--scroll-fade-alpha:0.15;
 }
 
 body{background:var(--bg);color:var(--text);font-family:var(--font-body);font-size:var(--text-sm);min-height:100dvh;}
@@ -90,16 +92,31 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 
 /* ── TAB BAR ── */
 .tab-bar{
-  background:
-    linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.15) 100%) right 0 / 40px 100% no-repeat,
-    var(--surface);
-  background-attachment:local,local;
   border-bottom:1px solid var(--border);
   padding:0 var(--space-6);height:52px;
   display:flex;flex-wrap:nowrap;align-items:center;gap:var(--space-6);
   overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;
   scroll-padding-inline:var(--space-6);
   position:sticky;top:58px;z-index:49;
+  /* 4-layer scroll affordance fade (theme-specific overrides below) */
+}
+/* Dark theme: light fade gradient (white overlay on dark surface) */
+[data-theme="dark"] .tab-bar{
+  background:
+    linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.1) 100%) right 0 / 40px 100% no-repeat,
+    var(--surface),
+    linear-gradient(90deg, rgba(255,255,255,0.1) 0%, transparent 100%) left 0 / 40px 100% no-repeat,
+    var(--surface);
+  background-attachment:local,local,scroll,scroll;
+}
+/* Light theme: dark fade gradient (black overlay on light surface) */
+[data-theme="light"] .tab-bar{
+  background:
+    linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.15) 100%) right 0 / 40px 100% no-repeat,
+    var(--surface),
+    linear-gradient(90deg, rgba(0,0,0,0.15) 0%, transparent 100%) left 0 / 40px 100% no-repeat,
+    var(--surface);
+  background-attachment:local,local,scroll,scroll;
 }
 .tab-btn{
   height:100%;padding:0 var(--space-4);white-space:nowrap;flex-shrink:0;

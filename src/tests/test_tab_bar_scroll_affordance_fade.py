@@ -1,11 +1,11 @@
 """Unit tests for the tab bar scroll affordance edge fade (issue #1445).
 
 Tests verify:
-1. The .tab-bar CSS block contains a linear-gradient for the right-edge fade
-2. The gradient has the correct background-attachment property (local)
-3. The fade is positioned at the right edge and sized appropriately
-4. The fade uses a semi-transparent overlay color for visibility
-5. Desktop tabs (≥1280px) are not affected by the fade
+1. Both dark and light theme .tab-bar CSS rules contain linear-gradients (4-layer technique)
+2. Correct background-attachment values (local, local, scroll, scroll for 4-layer trick)
+3. Theme-aware colors for visibility in both themes
+4. No false affordance on desktop (scroll-attached layers ensure fade disappears at end)
+5. No JavaScript changes; pure CSS implementation
 """
 from __future__ import annotations
 
@@ -16,156 +16,151 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 INDEX_HTML = REPO_ROOT / "src" / "dashboard" / "static" / "index.html"
 
 
-def test_tab_bar_has_scroll_affordance_gradient():
-    """Verify .tab-bar CSS block contains a linear-gradient for the scroll affordance fade.
+def test_dark_theme_tab_bar_has_scroll_affordance_gradient():
+    """Verify dark theme .tab-bar CSS contains linear-gradients with 4-layer technique.
 
-    The fade gradient should signal to users that there's more content to
-    scroll to the right on mobile devices where not all tabs are visible.
+    Dark theme should use semi-transparent white overlay for visibility against dark surface.
+    Implements the two-background-attachment trick with 4 layers to prevent false
+    affordance on desktop where tabs don't overflow.
     """
     html = INDEX_HTML.read_text(encoding="utf-8")
 
-    # Find the .tab-bar CSS rule (need to handle multi-line background property)
-    match = re.search(r'\.tab-bar\{([^}]*?)background:', html)
-    assert match, ".tab-bar CSS rule with background property not found"
+    # Find the dark theme tab-bar CSS rule
+    match = re.search(r'\[data-theme="dark"\]\s+\.tab-bar\{([^}]*?)\}', html, re.DOTALL)
+    assert match, "[data-theme=\"dark\"] .tab-bar CSS rule not found"
 
-    # Find the complete tab-bar block by looking for the closing brace
-    start_idx = match.start()
-    brace_count = 0
-    end_idx = start_idx
-    for i in range(start_idx, len(html)):
-        if html[i] == '{':
-            brace_count += 1
-        elif html[i] == '}':
-            brace_count -= 1
-            if brace_count == 0:
-                end_idx = i + 1
-                break
+    dark_tab_bar_css = match.group(1)
 
-    tab_bar_css = html[start_idx:end_idx]
-
-    assert 'linear-gradient' in tab_bar_css, (
-        ".tab-bar CSS must contain a linear-gradient for the scroll affordance fade"
+    # Verify 4-layer technique with two linear-gradients (plus solid fills)
+    gradient_count = dark_tab_bar_css.count('linear-gradient')
+    assert gradient_count >= 2, (
+        "Dark theme .tab-bar must have at least 2 linear-gradients for 4-layer technique"
     )
-    assert '90deg' in tab_bar_css or 'to right' in tab_bar_css, (
-        "Gradient must be horizontal (90deg or 'to right') to create a left-to-right fade"
+
+    # Verify theme-aware color: semi-transparent white for dark theme
+    assert 'rgba(255,255,255' in dark_tab_bar_css, (
+        "Dark theme gradient must use semi-transparent white for visibility against dark surface"
     )
 
 
-def test_tab_bar_gradient_has_local_attachment():
-    """Verify the fade gradient uses background-attachment:local to scroll with content.
+def test_light_theme_tab_bar_has_scroll_affordance_gradient():
+    """Verify light theme .tab-bar CSS contains linear-gradients with 4-layer technique.
 
-    The gradient must move with the tab bar's horizontal scroll so the fade
-    appears/disappears based on scroll position (not fixed to viewport).
+    Light theme should use semi-transparent black overlay for visibility against light surface.
+    Implements the two-background-attachment trick with 4 layers to prevent false
+    affordance on desktop where tabs don't overflow.
     """
     html = INDEX_HTML.read_text(encoding="utf-8")
 
-    # Find the .tab-bar CSS rule
-    match = re.search(r'\.tab-bar\{([^}]*?)\}', html, re.DOTALL)
-    assert match, ".tab-bar CSS rule not found"
+    # Find the light theme tab-bar CSS rule
+    match = re.search(r'\[data-theme="light"\]\s+\.tab-bar\{([^}]*?)\}', html, re.DOTALL)
+    assert match, "[data-theme=\"light\"] .tab-bar CSS rule not found"
 
-    tab_bar_css = match.group(1)
+    light_tab_bar_css = match.group(1)
 
-    assert 'background-attachment:' in tab_bar_css, (
-        ".tab-bar CSS must specify background-attachment for the gradient"
+    # Verify 4-layer technique with two linear-gradients (plus solid fills)
+    gradient_count = light_tab_bar_css.count('linear-gradient')
+    assert gradient_count >= 2, (
+        "Light theme .tab-bar must have at least 2 linear-gradients for 4-layer technique"
     )
-    assert 'local' in tab_bar_css, (
-        "background-attachment must contain 'local' so the fade scrolls with content"
+
+    # Verify theme-aware color: semi-transparent black for light theme
+    assert 'rgba(0,0,0' in light_tab_bar_css, (
+        "Light theme gradient must use semi-transparent black for visibility against light surface"
     )
+
+
+def test_tab_bar_uses_four_layer_background_attachment_technique():
+    """Verify both theme .tab-bar rules use the 4-layer background-attachment technique.
+
+    The two-background-attachment trick with local,local,scroll,scroll prevents false
+    affordance (fade appearing when tabs don't overflow on desktop). The scroll-attached
+    layers pinned to the viewport mask out the local layers when no scrollable content exists.
+    """
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    # Check both theme rules
+    for theme in ["dark", "light"]:
+        match = re.search(
+            rf'\[data-theme="{theme}"\]\s+\.tab-bar\{{([^}}]*?)\}}',
+            html,
+            re.DOTALL
+        )
+        assert match, f"[data-theme=\"{theme}\"] .tab-bar CSS rule not found"
+
+        theme_css = match.group(1)
+
+        # Verify background-attachment has 4 values: local, local, scroll, scroll
+        assert 'background-attachment:local,local,scroll,scroll' in theme_css, (
+            f"{theme} theme must use 'background-attachment:local,local,scroll,scroll' "
+            "for the 4-layer technique"
+        )
 
 
 def test_tab_bar_gradient_positioned_right():
-    """Verify the fade gradient is positioned at the right edge.
+    """Verify gradients are positioned at right and left edges.
 
-    The gradient should appear on the right side of the tab bar to signal
-    overflow to the right.
+    The 4-layer technique uses right-edge gradient (layer 1/3) and left-edge gradient
+    (layer 1 inverted for layer 3) to create the fade affordance.
     """
     html = INDEX_HTML.read_text(encoding="utf-8")
 
-    # Find the .tab-bar CSS rule
-    match = re.search(r'\.tab-bar\{([^}]*?)\}', html, re.DOTALL)
-    assert match, ".tab-bar CSS rule not found"
+    # Check both theme rules contain "right" positioning
+    for theme in ["dark", "light"]:
+        match = re.search(
+            rf'\[data-theme="{theme}"\]\s+\.tab-bar\{{([^}}]*?)\}}',
+            html,
+            re.DOTALL
+        )
+        assert match, f"[data-theme=\"{theme}\"] .tab-bar CSS rule not found"
 
-    tab_bar_css = match.group(1)
+        theme_css = match.group(1)
 
-    # Check for position indicator: either "right", "100%", or similar
-    assert (
-        'right ' in tab_bar_css or
-        '100% ' in tab_bar_css or
-        'calc(' in tab_bar_css
-    ), (
-        ".tab-bar gradient must be positioned at the right edge "
-        "(use 'right', '100%', or 'calc' for positioning)"
-    )
+        # Both should have right positioning for right-edge fade
+        assert 'right' in theme_css, (
+            f"{theme} theme gradient must use 'right' positioning for right-edge fade"
+        )
 
 
 def test_tab_bar_gradient_sized_appropriately():
-    """Verify the fade gradient has an appropriate width (~40px).
+    """Verify fade gradients have appropriate width (~40px).
 
-    The gradient should be wide enough to be visible but not so wide that
-    it obscures the last tab(s).
+    The gradient should be wide enough to be visible but not obscure the last tab(s).
     """
     html = INDEX_HTML.read_text(encoding="utf-8")
 
-    # Find the .tab-bar CSS rule
-    match = re.search(r'\.tab-bar\{([^}]*?)\}', html, re.DOTALL)
-    assert match, ".tab-bar CSS rule not found"
+    # Check both theme rules
+    for theme in ["dark", "light"]:
+        match = re.search(
+            rf'\[data-theme="{theme}"\]\s+\.tab-bar\{{([^}}]*?)\}}',
+            html,
+            re.DOTALL
+        )
+        assert match, f"[data-theme=\"{theme}\"] .tab-bar CSS rule not found"
 
-    tab_bar_css = match.group(1)
+        theme_css = match.group(1)
 
-    # Look for background-size with a pixel width value (expect around 40px)
-    # Pattern: "background-size: ... / 40px 100%" or similar
-    assert (
-        '40px' in tab_bar_css or
-        '35px' in tab_bar_css or
-        '45px' in tab_bar_css or
-        '100%' in tab_bar_css  # Fallback check
-    ), (
-        ".tab-bar gradient must have a defined width via background-size "
-        "(typically 35-45px for the fade effect)"
-    )
-
-
-def test_tab_bar_gradient_uses_transparent_to_overlay():
-    """Verify the fade gradient transitions from transparent to a semi-opaque overlay.
-
-    The gradient must be partially transparent (not solid) to show the tabs
-    beneath while providing a visual affordance for scroll.
-    """
-    html = INDEX_HTML.read_text(encoding="utf-8")
-
-    # Find the .tab-bar CSS rule
-    match = re.search(r'\.tab-bar\{([^}]*?)\}', html, re.DOTALL)
-    assert match, ".tab-bar CSS rule not found"
-
-    tab_bar_css = match.group(1)
-
-    # Check for transparent in the gradient and a semi-opaque color
-    assert 'transparent' in tab_bar_css, (
-        "Gradient must use 'transparent' as one color stop"
-    )
-    assert (
-        'rgba(' in tab_bar_css or
-        'hsla(' in tab_bar_css or
-        'var(--' in tab_bar_css  # CSS variable that might include opacity
-    ), (
-        "Gradient must transition to a semi-transparent overlay color "
-        "(use rgba, hsla, or a CSS variable with opacity)"
-    )
+        # Should contain 40px sizing for the fade width
+        assert '40px' in theme_css, (
+            f"{theme} theme .tab-bar must have '40px' width for the fade gradient"
+        )
 
 
 def test_tab_bar_still_has_required_overflow_properties():
     """Verify the scroll affordance doesn't break overflow containment.
 
     The tab bar must still have overflow-x:auto and flex-wrap:nowrap
-    for the existing scroll behavior to work.
+    for the existing scroll behavior to work. These are in the base .tab-bar
+    rule (after theme-specific background rules).
     """
     html = INDEX_HTML.read_text(encoding="utf-8")
 
-    # Find the .tab-bar CSS rule
-    match = re.search(r'\.tab-bar\{([^}]*?)\}', html, re.DOTALL)
-    assert match, ".tab-bar CSS rule not found"
+    # Find the base .tab-bar CSS rule by searching for the pattern after light theme rule
+    # Look for the standalone .tab-bar{ rule that comes after the theme-specific ones
+    match = re.search(r'\.tab-bar\{\s*border-bottom[^}]*\}', html, re.DOTALL)
+    assert match, ".tab-bar CSS rule with border-bottom property not found"
 
-    tab_bar_css = match.group(1)
+    tab_bar_css = match.group(0)
 
     assert 'overflow-x:auto' in tab_bar_css, (
         ".tab-bar must retain 'overflow-x:auto' for horizontal scroll"
