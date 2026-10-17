@@ -2378,12 +2378,47 @@ async function sellPosition(tokenId, btn) {
 const CLOSED_PAGE_SIZE = 15;
 let _closedAll = [];
 let _closedPage = 0;
+// #1457: closed positions arrive in two waves -- the fast /api/portfolio/history
+// fetch (DB/JSONL, no network) renders first; the slower /api/portfolio wallet
+// fetch resolves later and may add a few "manual trade" entries the fast path
+// can't see. These two Sets let a wallet-triggered merge re-render the list
+// without resetting the user's page or collapsing an open chart -- same
+// pattern as _copyExpandedPositionIds (copy-trading positions table).
+let _closedExpandedIds = new Set();   // token_ids with an open chart panel
+let _closedNewIds = new Set();        // token_ids added by the most recent merge, pending highlight
 
 function renderClosed(positions) {
   _closedAll = positions;
   _closedPage = 0;
+  _closedExpandedIds.clear();
+  _closedNewIds.clear();
   document.getElementById('closed-count').textContent = positions.length;
   _renderClosedPage();
+}
+
+// #1457: merge the slower /api/portfolio wallet fetch's closed_positions into
+// the list already rendered from /api/portfolio/history. Dedupes by token_id --
+// anything the fast path already showed is skipped, so only genuine
+// "manual trade" entries (wallet-only, never written to DB/JSONL) get added.
+// Deliberately silent when there's nothing new: manual trades are rare, so a
+// pending/loading indicator for this source would be visible noise on nearly
+// every page load for a check that usually resolves to nothing. When entries
+// *are* added, they get the same brief highlight already used to draw the
+// eye to a changed row elsewhere in this dashboard (.copy-row-highlight,
+// reduced-motion-safe) instead of silently appearing or jumping the page.
+function mergeClosedFromWallet(positions) {
+  const seen = new Set(_closedAll.map(p => p.token_id).filter(Boolean));
+  const additions = positions.filter(p => p.token_id && !seen.has(p.token_id));
+  if (!additions.length) return;
+
+  _closedAll = _closedAll.concat(additions).sort((a, b) => {
+    const ta = a.closed_at ? new Date(a.closed_at).getTime() : 0;
+    const tb = b.closed_at ? new Date(b.closed_at).getTime() : 0;
+    return tb - ta; // newest first, matches the existing list order
+  });
+  _closedNewIds = new Set(additions.map(p => p.token_id));
+  document.getElementById('closed-count').textContent = _closedAll.length;
+  _renderClosedPage(); // not renderClosed() -- keep the current page, don't reset to page 0
 }
 
 function closedChangePage(delta) {
@@ -2431,8 +2466,15 @@ function _renderClosedPage() {
       <div class="pos-ts">${age}</div>
       ${hasChart ? `<i data-lucide="chevron-down" class="closed-chevron" id="chev-${p.token_id}"></i>` : ''}
     `;
+    // #1457: a token_id freshly merged in from the slower /api/portfolio wallet
+    // fetch gets the same brief highlight used elsewhere (.copy-row-highlight)
+    // so the operator notices a manual-trade entry appeared, without a layout
+    // jump or resetting the page. New DOM elements play the animation on
+    // insertion automatically -- no need to force a reflow like the reused-row
+    // case elsewhere in this file.
+    const cardCls = 'closed-card' + (_closedNewIds.has(p.token_id) ? ' copy-row-highlight' : '');
     if (hasChart) {
-      return `<div class="closed-card">
+      return `<div class="${cardCls}" id="closed-card-${p.token_id}">
         <div class="closed-row closed-expandable" onclick="toggleClosedChart('${p.token_id}',${p.entry_price},${p.exit_price})">${rowInner}</div>
         <div class="closed-chart-section" id="closed-chart-${p.token_id}" style="display:none">
           <div class="chart-wrap" id="closed-wrap-${p.token_id}"><canvas id="canvas-closed-${p.token_id}"></canvas></div>
@@ -2448,11 +2490,62 @@ function _renderClosedPage() {
   document.getElementById('pg-next').disabled = _closedPage === total - 1;
 
   lucide.createIcons();
+  _reopenExpandedClosedCharts(page);
+
+  // Highlight is a one-shot cue for the rows that were new *this* render;
+  // clear it so an unrelated later re-render (page change, next poll) doesn't
+  // re-flash the same rows. 2.4s matches .copy-row-highlight's animation length.
+  if (_closedNewIds.size) {
+    const flashed = _closedNewIds;
+    _closedNewIds = new Set();
+    setTimeout(() => {
+      flashed.forEach(id => {
+        const card = document.getElementById('closed-card-' + id);
+        if (card) card.classList.remove('copy-row-highlight');
+      });
+    }, 2400);
+  }
+}
+
+// #1457: re-apply chart-expanded state after a merge-triggered re-render so an
+// operator mid-review of a chart doesn't have it silently collapse out from
+// under them. Mirrors _copyReopenExpandedPositionDetails's pattern for the
+// copy-trading positions table.
+function _reopenExpandedClosedCharts(page) {
+  const onPage = new Set(page.map(p => p.token_id));
+  _closedExpandedIds.forEach(tokenId => {
+    if (!onPage.has(tokenId)) return;
+    const pos = page.find(p => p.token_id === tokenId);
+    if (!pos) return;
+    const section = document.getElementById('closed-chart-' + tokenId);
+    const chev = document.getElementById('chev-' + tokenId);
+    if (!section) return;
+    section.style.display = 'block';
+    if (chev) chev.style.transform = 'rotate(180deg)';
+    section.dataset.loaded = '1';
+    _renderClosedChart(tokenId, pos.entry_price, pos.exit_price);
+  });
 }
 
 /* ─────────────────────────────────────────
    API
    ───────────────────────────────────────── */
+
+// #1457: fast, network-free source for "Recently Closed" -- renders the
+// section without waiting on fetchPortfolio()'s slower wallet fetch below.
+async function fetchHistory() {
+  try {
+    const r = await fetch('/api/portfolio/history');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    renderClosed(data.closed_positions || []);
+  } catch (e) {
+    // The error banner from fetchPortfolio() already covers "can't reach the
+    // API"; this endpoint failing independently is rare enough (DB/JSONL-only,
+    // no network) that a second banner would be more noise than signal.
+    console.error('History fetch failed:', e);
+  }
+}
 
 async function fetchPortfolio() {
   const banner = document.getElementById('error-banner');
@@ -2465,7 +2558,12 @@ async function fetchPortfolio() {
 
     renderWallet(data.open_positions, data.cash_usdc);
     renderOpen(data.open_positions);
-    renderClosed(data.closed_positions || []);
+    // #1457: fetchHistory() is the primary renderer for "Recently Closed"
+    // (fast, no network calls). This slower wallet fetch only merges in the
+    // few "manual trade" entries fetchHistory() can't see -- never calls
+    // renderClosed() directly, so it can't blow away fetchHistory()'s page
+    // state or re-render on every 30s poll when there's nothing new to add.
+    mergeClosedFromWallet(data.closed_positions || []);
 
     const ts = data.updated_at
       ? 'State: ' + new Date(data.updated_at).toLocaleTimeString()
@@ -2720,9 +2818,14 @@ function toggleClosedChart(tokenId, entryPrice, exitPrice) {
   const opening = section.style.display === 'none' || !section.style.display;
   section.style.display = opening ? 'block' : 'none';
   if (chev) chev.style.transform = opening ? 'rotate(180deg)' : 'rotate(0deg)';
-  if (opening && !section.dataset.loaded) {
-    section.dataset.loaded = '1';
-    _renderClosedChart(tokenId, entryPrice, exitPrice);
+  if (opening) {
+    _closedExpandedIds.add(tokenId); // #1457: survive a wallet-merge re-render
+    if (!section.dataset.loaded) {
+      section.dataset.loaded = '1';
+      _renderClosedChart(tokenId, entryPrice, exitPrice);
+    }
+  } else {
+    _closedExpandedIds.delete(tokenId);
   }
 }
 
@@ -4418,6 +4521,7 @@ function _configRestoreCtrl(key, param) {
    ───────────────────────────────────────── */
 let currentTab = 'portfolio';
 let portfolioIntervalId = null;
+let historyIntervalId = null; // #1457: fetchHistory()'s own interval, independent of fetchPortfolio()'s
 let botLogIntervalId = null;
 
 function switchTab(tab) {
@@ -4480,8 +4584,10 @@ function switchTab(tab) {
 
   // Start portfolio polling when entering Portfolio tab
   if (tab === 'portfolio' && !portfolioIntervalId) {
+    fetchHistory();   // #1457: fires first-ish and independently; renders "Recently Closed" without waiting on fetchPortfolio()
     fetchPortfolio();
     fetchBotLog();
+    historyIntervalId = setInterval(fetchHistory, 30_000);
     portfolioIntervalId = setInterval(fetchPortfolio, 30_000);
     botLogIntervalId = setInterval(fetchBotLog, 30_000);
   }
@@ -9232,11 +9338,13 @@ async function fetchCopyTradingActivityFeed(scope = 'paper') {
    ───────────────────────────────────────── */
 window.addEventListener('DOMContentLoaded', () => {
   lucide.createIcons();
+  fetchHistory();   // #1457: independent of fetchPortfolio() below -- see fetchHistory()'s doc comment
   fetchPortfolio();
   fetchBotLog();
   fetchWeatherHealth();
   _copyPositionsInitStaticControls();
   _copyActivityInitStaticControls();
+  historyIntervalId = setInterval(fetchHistory, 30_000);
   portfolioIntervalId = setInterval(fetchPortfolio, 30_000);
   botLogIntervalId = setInterval(fetchBotLog, 30_000);
   setInterval(fetchWeatherHealth, 30_000);
