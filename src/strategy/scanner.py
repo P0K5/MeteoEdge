@@ -916,7 +916,7 @@ def scan_markets(
                     p_yes = true_probability_yes(bracket, state, mins_left, deb_enabled=_deb_enabled, sigma_climb_fraction=sigma_climb_fraction, use_ensemble_sigma=_use_ensemble_sigma, settlement_date=date.fromisoformat(_decision_date))
                 _snap_current_high = state.current_high_f
                 _snap_latest_temp = state.latest_temp_f
-                _snap_forecast_high = state.forecast_high_f
+                _snap_forecast_high = state.corrected_mu_f or state.deb_mu_f or state.forecast_high_f
 
                 # Issue #820: evening false-certainty entries. When the
                 # WeatherState's local day differs from the market's settlement
