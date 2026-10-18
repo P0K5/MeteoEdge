@@ -1178,6 +1178,26 @@ class Database:
                     fee_expr = "actual_fee_cents"
                 else:
                     fee_expr = "NULL"
+                # Issue #1471: the ADD COLUMN migrations above run BEFORE this
+                # rebuild, so these columns usually exist already and must be
+                # carried over (a rebuild that omits them silently drops data).
+                close_reason_expr = (
+                    "close_reason" if "close_reason" in old_col_names else "NULL"
+                )
+                mtsc_expr = (
+                    "minutes_to_settlement_at_close"
+                    if "minutes_to_settlement_at_close" in old_col_names else "NULL"
+                )
+                bid_depth_expr = (
+                    "bid_depth_at_close"
+                    if "bid_depth_at_close" in old_col_names else "NULL"
+                )
+                # Literal "0", not NULL: the target schema declares is_next_day
+                # NOT NULL DEFAULT 0, so a NULL fallback would violate the
+                # constraint on insert (unlike the nullable columns above).
+                is_next_day_expr = (
+                    "is_next_day" if "is_next_day" in old_col_names else "0"
+                )
                 self._rebuild_trades_table(
                     column_defs="""
                         id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1200,17 +1220,39 @@ class Database:
                         settled_at      TEXT,
                         estimated_fee_cents REAL,
                         size_eur        REAL,
+                        close_reason    TEXT,
+                        minutes_to_settlement_at_close REAL,
+                        bid_depth_at_close INTEGER,
                         direction       TEXT NOT NULL DEFAULT 'high',
                         p_yes_raw       REAL,
-                        end_date        TEXT
+                        end_date        TEXT,
+                        is_next_day     INTEGER NOT NULL DEFAULT 0
                     """,
                     select_columns=(
                         "id,ts,station,ticker,bracket_low,bracket_high,side,"
                         "predicted_price,actual_price,slippage,predicted_edge,mode,"
                         "order_id,outcome,pnl,capital_before,capital_after,settled_at,"
-                        f"{fee_expr},size_eur,{direction_expr},{p_yes_raw_expr},{end_date_expr}"
+                        f"{fee_expr},size_eur,{close_reason_expr},{mtsc_expr},{bid_depth_expr},"
+                        f"{direction_expr},{p_yes_raw_expr},{end_date_expr},{is_next_day_expr}"
                     ),
                 )
+                # _rebuild_trades_table (see its docstring) only restores
+                # idx_trades_station_ts and idx_trades_mode -- it does not
+                # touch idx_trades_close_reason or idx_trades_shadow_unique,
+                # so both are re-created here, verbatim against the
+                # definitions created earlier in this function (lines ~994
+                # and ~1138), to replace what the rebuild's DROP TABLE took
+                # with it.
+                self._conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_trades_close_reason "
+                    "ON trades(close_reason)"
+                )
+                self._conn.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_trades_shadow_unique "
+                    "ON trades(station, bracket_low, bracket_high, side, direction, "
+                    "substr(ts,1,10)) WHERE mode='shadow'"
+                )
+                self._conn.commit()
 
             # Migration: drop the scan_decisions.gate_verdict CHECK constraint
             # (issue #912). SQLite cannot ALTER a CHECK in place -- requires a
