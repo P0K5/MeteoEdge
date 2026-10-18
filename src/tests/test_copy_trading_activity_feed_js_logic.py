@@ -143,11 +143,24 @@ _ASSERTIONS = textwrap.dedent("""
       const plainHtml = _copyActivityItemHtml({ event_type: 'wallet_paused', ts: '2026-09-03T00:00:00Z',
         mode: 'paper', address: '0xW2', paused_reason: 'roi', live_optin_revoked: false });
       assert.ok(!plainHtml.includes('revoked'));
-      // Issue #1368: origin (manual vs automatic) is not recorded, so the
-      // text must be neutral -- never claim "auto-paused".
+      // Issue #1403: neutral wording when the origin is absent (legacy).
       assert.ok(plainHtml.includes('Wallet paused — roi'));
       assert.ok(revokedHtml.includes('Wallet paused — roi. Live trading opt-in was revoked.'));
       assert.ok(!plainHtml.includes('auto-paused') && !revokedHtml.includes('auto-paused'));
+      const mk = (by, revoked) => _copyActivityItemHtml({ event_type: 'wallet_paused',
+        ts: '2026-09-03T00:00:00Z', mode: 'paper', address: '0xW2', paused_reason: 'roi',
+        paused_by: by, live_optin_revoked: revoked });
+      const autoPlain = mk('health_job', false);
+      const autoRevoked = mk('health_job', true);
+      assert.ok(autoPlain.includes('Wallet auto-paused — roi'));
+      assert.ok(autoRevoked.includes('Wallet auto-paused — roi. Live trading opt-in was revoked.'));
+      assert.ok(/aria-label="Wallet auto-paused for /.test(autoPlain));
+      for (const by of ['cli', 'dashboard', null, undefined, 'bogus']) {
+        const h = mk(by, false);
+        assert.ok(h.includes('Wallet paused — roi'));
+        assert.ok(!h.includes('auto-paused'));
+        assert.ok(/aria-label="Wallet paused for /.test(h));
+      }
 
       // ------------------------------------------------------------------
       // 2. Stale-feed indicator: a poll failure AFTER data already loaded
