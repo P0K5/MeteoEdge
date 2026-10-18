@@ -617,6 +617,7 @@ class TestPauseEndpoint:
         wallets = {w["address"]: w for w in db.get_followed_wallets()}
         assert wallets["0xW"]["status"] == "paused"
         assert wallets["0xW"]["paused_reason"] == "manual review"
+        assert wallets["0xW"]["paused_by"] == "dashboard"  # issue #1403
 
     def test_refuses_when_not_followed(self, api_client):
         client, _ = api_client

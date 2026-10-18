@@ -129,7 +129,9 @@ class TestPause:
         rc = pause(db, "0xabc", "unstable")
 
         assert rc == 0
-        db.update_followed_wallet_status.assert_called_once_with("0xabc", "paused", "unstable")
+        db.update_followed_wallet_status.assert_called_once_with(
+            "0xabc", "paused", "unstable", paused_by="cli"
+        )
 
     def test_reports_revoked_live_optin(self, capsys):
         db = MagicMock()
