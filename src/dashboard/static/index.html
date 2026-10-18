@@ -1026,7 +1026,12 @@ a,button,input,select{transition:color var(--transition),background var(--transi
   .copy-skip-meaning{flex:1 1 auto;}
 }
 @media(max-width:600px){
-  .copy-signals-detail-td{position:sticky;left:0;max-width:calc(100vw - 32px);}
+  /* max-width on the <td> itself does not constrain an auto-layout table
+     cell's rendered width (the table layout algorithm, not the cell's own
+     box model, decides it) -- it must go on the block-level panel div
+     inside instead, which does respond to max-width normally. */
+  .copy-signals-detail-td{position:sticky;left:0;}
+  .copy-signals-detail-panel{max-width:calc(100vw - 32px);}
 }
 .copy-chevron{width:14px;height:14px;color:var(--muted);transition:transform var(--transition);flex-shrink:0;}
 .copy-detail-td{background:var(--surface-2);padding:0 !important;}
