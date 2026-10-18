@@ -960,6 +960,9 @@ class CopyActivityEventOut(BaseModel):
     size_usd: float | None = None
     skip_reason: str | None = None
     paused_reason: str | None = None
+    # Issue #1403: who paused the wallet ('health_job' | 'cli' | 'dashboard');
+    # None for legacy pauses. Only set on wallet_paused events.
+    paused_by: str | None = None
     # Issue #1264: True only on a wallet_paused event whose pause also
     # revoked the wallet's live opt-in (live_enabled_cleared_at at/after
     # paused_at). Lets the feed append a sentence and show the live warning.
@@ -3446,7 +3449,7 @@ def copy_trading_pause_wallet(address: str, req: CopyPauseRequest) -> CopyFollow
     buf = io.StringIO()
     try:
         with redirect_stdout(buf):
-            code = pause(_db, address, reason)
+            code = pause(_db, address, reason, paused_by="dashboard")
     except Exception as e:  # noqa: BLE001 — surface as a structured refusal, never a bare 500
         logger.exception("copy_trading_pause_wallet: pause() raised for %s", address)
         return CopyFollowResultOut(success=False, message=f"Pause failed: {e}")
@@ -4294,6 +4297,7 @@ def copy_trading_activity_feed(
             mode="paper",
             address=w["address"],
             paused_reason=w.get("paused_reason"),
+            paused_by=w.get("paused_by"),
             live_optin_revoked=bool(
                 w.get("live_enabled_cleared_at")
                 and w["live_enabled_cleared_at"] >= w["paused_at"]

@@ -212,3 +212,43 @@ def test_fails_loud_outside_git_repo(tmp_path):
 if __name__ == "__main__":
     import sys
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+def test_agent_suffix_gives_distinct_worktree_and_branch(shared_checkout):
+    """Issue #1475: two agents on the same issue/branch must not share a
+    directory. With a suffix each gets its own worktree and branch."""
+    a = _run_ensure(shared_checkout, "feat/1457-shared", "", "mid")
+    b = _run_ensure(shared_checkout, "feat/1457-shared", "", "designer")
+    assert a.returncode == 0 and b.returncode == 0, (a.stderr, b.stderr)
+    pa, pb = Path(_last_line(a.stdout)), Path(_last_line(b.stdout))
+    assert pa != pb
+    assert _git(pa, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == "feat/1457-shared--mid"
+    assert _git(pb, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == "feat/1457-shared--designer"
+    # Uncommitted work in one is invisible to the other.
+    (pa / "mine.txt").write_text("x\n")
+    assert not (pb / "mine.txt").exists()
+
+
+def test_agent_suffix_from_env_and_branches_off_pushed_shared_branch(shared_checkout):
+    _git(shared_checkout, "checkout", "-b", "feat/shared")
+    (shared_checkout / "shared.txt").write_text("pushed\n")
+    _git(shared_checkout, "add", "-A")
+    _git(shared_checkout, "commit", "-m", "shared work")
+    _git(shared_checkout, "push", "origin", "feat/shared")
+    _git(shared_checkout, "checkout", "master")
+    res = subprocess.run(
+        ["bash", str(ENSURE_WT), "feat/shared"], cwd=str(shared_checkout),
+        capture_output=True, text=True, env={**__import__("os").environ, "ENSURE_WORKTREE_AGENT": "designer"},
+    )
+    assert res.returncode == 0, res.stderr
+    wt = Path(_last_line(res.stdout))
+    assert (wt / "shared.txt").exists()
+    assert _git(wt, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == "feat/shared--designer"
+
+
+def test_no_suffix_behavior_unchanged(shared_checkout):
+    res = _run_ensure(shared_checkout, "feat/plain")
+    assert res.returncode == 0, res.stderr
+    wt = Path(_last_line(res.stdout))
+    assert wt.name == "agent-feat-plain"
+    assert _git(wt, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == "feat/plain"
