@@ -97,3 +97,26 @@ def trend(window: int, baseline_total: int) -> str:
     if window >= SPIKE_RATIO * (baseline_total / BASELINE_DAYS):
         return "SPIKE"
     return "STEADY"
+
+
+# Display words for each class (#1389): the dashboard renders these verbatim and
+# keeps no vocabulary of its own.
+CLASS_LABELS: "dict[str, str]" = {
+    STRUCTURAL: "Structural",
+    ROUTINE: "Routine",
+    LIFECYCLE: "Lifecycle",
+    BREAKER: "Circuit breaker",
+    UNKNOWN: "Unrecognized",
+}
+UNKNOWN_MEANING = "Unrecognized skip reason"
+
+
+def describe_reason(reason: str) -> "tuple[str, str, str]":
+    """``(class, class_label, meaning)`` for display; meaning is sentence-cased."""
+    cls = classify(reason)
+    if reason in SKIP_REASONS:
+        text = SKIP_REASONS[reason][1]
+        meaning = text[:1].upper() + text[1:]
+    else:
+        meaning = UNKNOWN_MEANING
+    return cls, CLASS_LABELS[cls], meaning
