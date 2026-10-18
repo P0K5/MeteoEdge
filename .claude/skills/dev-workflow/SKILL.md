@@ -59,6 +59,9 @@ hand-roll workarounds; use this instead:
    isolation failed" comment and escalate to the Tech Lead PM. Do **not** fall
    back to the shared checkout. Do every subsequent edit, test run, and commit
    from inside `$WT`; confirm with `git rev-parse --show-toplevel` if unsure.
+   If the spawn prompt says another agent shares your issue/branch, pass your
+   agent name as the third arg (`ensure_worktree.sh <branch> "" <agent>`); see
+   governance.md "Same-issue multi-agent spawns".
 6. **Implement** in small, coherent steps, following existing patterns.
 7. **Test — run exactly what CI runs, before every push** (CI failures this
    session were all avoidable: PR #1372 pinned-schedule test, #1373 E741, #1375
