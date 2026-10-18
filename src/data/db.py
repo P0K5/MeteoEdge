@@ -1187,6 +1187,9 @@ class Database:
                     "bid_depth_at_close"
                     if "bid_depth_at_close" in old_col_names else "NULL"
                 )
+                # Literal "0", not NULL: the target schema declares is_next_day
+                # NOT NULL DEFAULT 0, so a NULL fallback would violate the
+                # constraint on insert (unlike the nullable columns above).
                 is_next_day_expr = (
                     "is_next_day" if "is_next_day" in old_col_names else "0"
                 )
@@ -1228,9 +1231,13 @@ class Database:
                         f"{direction_expr},{p_yes_raw_expr},{end_date_expr},{is_next_day_expr}"
                     ),
                 )
-                # _rebuild_trades_table only restores the two base indexes;
-                # re-create the ones created earlier in _migrate (dropped with
-                # the old table).
+                # _rebuild_trades_table (see its docstring) only restores
+                # idx_trades_station_ts and idx_trades_mode -- it does not
+                # touch idx_trades_close_reason or idx_trades_shadow_unique,
+                # so both are re-created here, verbatim against the
+                # definitions created earlier in this function (lines ~994
+                # and ~1138), to replace what the rebuild's DROP TABLE took
+                # with it.
                 self._conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_trades_close_reason "
                     "ON trades(close_reason)"

@@ -52,6 +52,26 @@ def test_shadow_rebuild_preserves_close_and_next_day_columns(tmp_path):
     assert row["minutes_to_settlement_at_close"] == 42.5
     assert row["bid_depth_at_close"] == 7
     assert row["is_next_day"] == 1
-    idx = {r[1] for r in db._conn.execute("PRAGMA index_list(trades)")}
-    assert {"idx_trades_close_reason", "idx_trades_shadow_unique"} <= idx
+    # Assert the restored indexes' actual definitions, not just their names --
+    # IF NOT EXISTS would silently no-op against a same-named index left with
+    # a stale definition from a different code path.
+    index_list = {
+        r[1]: {"unique": r[2], "partial": r[4]}
+        for r in db._conn.execute("PRAGMA index_list(trades)")
+    }
+    assert index_list["idx_trades_close_reason"] == {"unique": 0, "partial": 0}
+    close_reason_cols = [
+        r[2] for r in db._conn.execute("PRAGMA index_info(idx_trades_close_reason)")
+    ]
+    assert close_reason_cols == ["close_reason"]
+
+    assert index_list["idx_trades_shadow_unique"] == {"unique": 1, "partial": 1}
+    shadow_cols = [
+        r[2] for r in db._conn.execute("PRAGMA index_info(idx_trades_shadow_unique)")
+    ]
+    # The trailing None is the substr(ts,1,10) expression term -- SQLite
+    # reports expression index terms with cid=-2 and no column name.
+    assert shadow_cols == [
+        "station", "bracket_low", "bracket_high", "side", "direction", None,
+    ]
     db.close()
