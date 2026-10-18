@@ -10,12 +10,22 @@
 # with none of the intended diff (see PR #796 recovery).
 #
 # Usage:
-#   scripts/ensure_worktree.sh <branch-name> [base-ref]
+#   scripts/ensure_worktree.sh <branch-name> [base-ref] [agent-suffix]
 #
 #   <branch-name>  the branch to create/use, e.g. junior/781-emos-projection
 #   [base-ref]     the ref to branch FROM (default: origin/master). Passing an
 #                  explicit base is what makes the starting point independent of
 #                  the shared checkout's (possibly moving) current HEAD.
+#   [agent-suffix] (issue #1475) optional per-agent tag, also read from the
+#                  ENSURE_WORKTREE_AGENT env var. Git allows a branch to be
+#                  checked out in only ONE worktree, so two agents on the same
+#                  issue/branch cannot share a path safely. With a suffix the
+#                  agent gets its OWN branch "<branch-name>--<suffix>" and its
+#                  own worktree directory. If no base-ref is given and
+#                  origin/<branch-name> exists, the agent branches from that
+#                  shared branch; integrate by rebasing/cherry-picking onto the
+#                  pushed shared branch. Without a suffix, behavior is unchanged
+#                  (single-agent use).
 #
 # Contract:
 #   SUCCESS  -> the absolute worktree path is printed as the LAST stdout line,
@@ -66,9 +76,17 @@ norm_path() {
 }
 
 BRANCH="${1:-}"
-BASE_REF="${2:-origin/master}"
+BASE_REF="${2:-}"
+AGENT_SUFFIX="${3:-${ENSURE_WORKTREE_AGENT:-}}"
 
 [ -n "$BRANCH" ] || BLOCK "no branch name given (usage: ensure_worktree.sh <branch> [base-ref])"
+
+if [ -n "$AGENT_SUFFIX" ]; then
+  AGENT_SUFFIX="$(printf '%s' "$AGENT_SUFFIX" | tr '/ ' '--' | tr -cd 'A-Za-z0-9._-')"
+  [ -n "$AGENT_SUFFIX" ] || BLOCK "agent suffix sanitizes to empty"
+  SHARED_BRANCH="$BRANCH"
+  BRANCH="$BRANCH--$AGENT_SUFFIX"
+fi
 
 # Must be run from inside a git work tree.
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
@@ -86,6 +104,18 @@ SANITIZED="$(printf '%s' "$BRANCH" | tr '/ ' '--' | tr -cd 'A-Za-z0-9._-')"
 WT_DIR="$MAIN_ROOT/.claude/worktrees/agent-$SANITIZED"
 
 mkdir -p "$MAIN_ROOT/.claude/worktrees"
+
+# Default base: the shared branch on origin when a per-agent suffix is in use
+# and that branch has been pushed; otherwise origin/master.
+if [ -z "$BASE_REF" ]; then
+  BASE_REF="origin/master"
+  if [ -n "$AGENT_SUFFIX" ]; then
+    git fetch --quiet origin "$SHARED_BRANCH" 2>/dev/null || true
+    if git rev-parse --verify --quiet "origin/$SHARED_BRANCH^{commit}" >/dev/null; then
+      BASE_REF="origin/$SHARED_BRANCH"
+    fi
+  fi
+fi
 
 # Best-effort fetch so origin/<branch> style bases are fresh. Never fatal on its
 # own -- we validate the base is resolvable immediately afterwards.

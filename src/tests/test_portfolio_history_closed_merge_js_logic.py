@@ -188,6 +188,35 @@ _ASSERTIONS = textwrap.dedent("""
         'fetchHistory() must render Recently Closed from /api/portfolio/history alone');
       assert.strictEqual(document.getElementById('closed-count').textContent, 1);
 
+      // ------------------------------------------------------------------
+      // 7. (#1473) A poll returning identical closed_positions must not reset
+      //    the page or collapse an expanded chart; a changed list keeps the
+      //    page (clamped) and expanded ids.
+      // ------------------------------------------------------------------
+      const poll = [];
+      for (let i = 0; i < 20; i++) {
+        poll.push(closedPos('tok-poll-' + i, new Date(2026, 9, 20 - i).toISOString()));
+      }
+      renderClosed(poll);
+      closedChangePage(1);
+      _closedExpandedIds.add('tok-poll-16');
+      const htmlBefore = document.getElementById('closed-positions').innerHTML;
+      renderClosed(JSON.parse(JSON.stringify(poll)));  // identical data
+      assert.strictEqual(document.getElementById('pg-info').textContent, 'Page 2 of 2',
+        'identical poll must not reset to page 1');
+      assert.ok(_closedExpandedIds.has('tok-poll-16'), 'identical poll must keep expanded chart');
+      assert.strictEqual(document.getElementById('closed-positions').innerHTML, htmlBefore);
+      // Changed data (one more settled position): stays on page 2.
+      renderClosed([closedPos('tok-poll-new', '2026-10-25T00:00:00Z')].concat(poll));
+      assert.strictEqual(document.getElementById('pg-info').textContent, 'Page 2 of 2',
+        'changed poll must keep the current page');
+      assert.ok(_closedExpandedIds.has('tok-poll-16'), 'changed poll must keep expanded chart');
+      assert.strictEqual(document.getElementById('closed-count').textContent, 21);
+      // List shrinks to one page: page is clamped, vanished expanded ids dropped.
+      renderClosed(poll.slice(0, 3));
+      assert.strictEqual(_closedPage, 0);
+      assert.ok(!_closedExpandedIds.has('tok-poll-16'), 'expanded id for removed row must be pruned');
+
       console.log('ALL_PORTFOLIO_HISTORY_MERGE_JS_ASSERTIONS_PASSED');
     })().catch((err) => {
       console.error(err);

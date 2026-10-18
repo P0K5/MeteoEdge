@@ -536,7 +536,10 @@ CREATE TABLE IF NOT EXISTS copy_wallets_followed (
     -- live_enabled. This nullable timestamp records WHEN a pause actually
     -- revoked a live opt-in (NULL = never), following the paused_at
     -- precedent, so the Activity Feed's wallet_paused event can say so.
-    live_enabled_cleared_at TEXT
+    live_enabled_cleared_at TEXT,
+    -- Issue #1403: who paused the wallet ('health_job' | 'cli' | 'dashboard'),
+    -- written and cleared together with paused_at. NULL = active or legacy pause.
+    paused_by            TEXT
 );
 
 -- Copy-trading detected signals (issue #1121). One row per detected BUY
@@ -974,6 +977,8 @@ class Database:
                 # Issue #1264: when a pause last revoked the live opt-in.
                 # NULL backfills every existing row (nothing revoked yet).
                 ("copy_wallets_followed", "live_enabled_cleared_at", "TEXT"),
+                # Issue #1403: pause origin; NULL for active and legacy rows.
+                ("copy_wallets_followed", "paused_by", "TEXT"),
                 # Issue #1391: live-side stuck-position columns (see the
                 # copy_live_positions CREATE TABLE comment). Default 0 / NULL
                 # backfills every existing row -- nothing is flagged by this.
@@ -2278,7 +2283,11 @@ class Database:
             return [dict(row) for row in cur.fetchall()]
 
     def update_followed_wallet_status(
-        self, address: str, status: str, paused_reason: "str | None" = None
+        self,
+        address: str,
+        status: str,
+        paused_reason: "str | None" = None,
+        paused_by: "str | None" = None,
     ) -> None:
         """Set *address*'s status in place -- does not touch any other column
         (``stake_per_trade``, ``added_at``, ``last_seen_trade_ts``).
@@ -2290,6 +2299,11 @@ class Database:
         ``paused_at`` is set to the current UTC ISO-8601 timestamp when
         pausing, and cleared to ``None`` when resuming to ``'active'``.
 
+        ``paused_by`` (issue #1403: ``'health_job'`` | ``'cli'`` |
+        ``'dashboard'``) is written and cleared together with ``paused_at``
+        -- it is stored only when pausing, so a stale origin can never
+        mislabel a later pause.
+
         Pausing also clears ``live_enabled`` (issue #1264, decision (a):
         manual and automatic pauses identically) and, only if the flag was
         set, stamps ``live_enabled_cleared_at`` with the same timestamp.
@@ -2299,6 +2313,8 @@ class Database:
         paused_at = None
         if status == "paused":
             paused_at = datetime.now(timezone.utc).isoformat()
+        else:
+            paused_by = None
 
         with self._lock:
             if status == "paused":
@@ -2314,13 +2330,14 @@ class Database:
                 )
                 self._conn.execute(
                     "UPDATE copy_wallets_followed SET status=?, paused_reason=?, "
-                    "paused_at=?, live_enabled=0 WHERE address=?",
-                    (status, paused_reason, paused_at, address),
+                    "paused_at=?, paused_by=?, live_enabled=0 WHERE address=?",
+                    (status, paused_reason, paused_at, paused_by, address),
                 )
             else:
                 self._conn.execute(
-                    "UPDATE copy_wallets_followed SET status=?, paused_reason=?, paused_at=? WHERE address=?",
-                    (status, paused_reason, paused_at, address),
+                    "UPDATE copy_wallets_followed SET status=?, paused_reason=?, "
+                    "paused_at=?, paused_by=? WHERE address=?",
+                    (status, paused_reason, paused_at, paused_by, address),
                 )
             self._conn.commit()
 

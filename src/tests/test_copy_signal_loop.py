@@ -1891,7 +1891,7 @@ class TestWalletAutoPauseHaltsLiveExecution:
             "address TEXT PRIMARY KEY, status TEXT, paused_reason TEXT, "
             "paused_at TEXT, stake_per_trade REAL, added_at TEXT, "
             "last_seen_trade_ts INTEGER, live_enabled INTEGER NOT NULL DEFAULT 0, "
-            "live_enabled_cleared_at TEXT)"
+            "live_enabled_cleared_at TEXT, paused_by TEXT)"
         )
         conn.execute(
             "INSERT INTO copy_wallets_followed "

@@ -2387,11 +2387,24 @@ let _closedPage = 0;
 let _closedExpandedIds = new Set();   // token_ids with an open chart panel
 let _closedNewIds = new Set();        // token_ids added by the most recent merge, pending highlight
 
+// #1473: signature of the last positions list passed to renderClosed(), so a
+// 30s poll that returns identical data is a no-op instead of resetting the
+// page / collapsing open charts. Tracked separately from _closedAll because
+// mergeClosedFromWallet() adds wallet-only rows to _closedAll that the history
+// endpoint never returns.
+let _closedSig = null;
+
 function renderClosed(positions) {
+  const sig = JSON.stringify(positions);
+  if (sig === _closedSig) return; // nothing changed -- keep page and expanded charts
+  _closedSig = sig;
   _closedAll = positions;
-  _closedPage = 0;
-  _closedExpandedIds.clear();
   _closedNewIds.clear();
+  // Keep the operator's page (clamped if the list shrank) and expanded charts;
+  // drop expanded ids whose position is no longer in the list.
+  const ids = new Set(positions.map(p => p.token_id));
+  _closedExpandedIds.forEach(id => { if (!ids.has(id)) _closedExpandedIds.delete(id); });
+  _closedPage = Math.max(0, Math.min(_closedPage, Math.ceil(positions.length / CLOSED_PAGE_SIZE) - 1));
   document.getElementById('closed-count').textContent = positions.length;
   _renderClosedPage();
 }
@@ -8978,6 +8991,12 @@ function _copyActivityModeBadgeHtml(e) {
   return `<span class="mode-badge ${cls}" aria-label="${aria}">${text}</span>`;
 }
 
+// Issue #1403: "auto-paused" only for a health-job pause; any other or
+// unrecognised/absent origin stays neutral (never claim "auto").
+function _copyActivityPausedWord(e) {
+  return e.paused_by === 'health_job' ? 'Wallet auto-paused' : 'Wallet paused';
+}
+
 function _copyActivityDescriptionHtml(e) {
   // Paper events: relabeled per the design spec so the row's text alone
   // (independent of the badge/border) also states "(paper)" explicitly --
@@ -8993,12 +9012,15 @@ function _copyActivityDescriptionHtml(e) {
   }
   if (e.event_type === 'wallet_paused') {
     const base = e.paused_reason ? _copyEscapeHtml(e.paused_reason) : 'No reason given';
+    // Issue #1403: only a health-job pause is "auto-paused"; cli/dashboard/
+    // legacy/unknown origins stay neutral.
+    const pausedWord = _copyActivityPausedWord(e);
     // Issue #1264: a pause that also revoked the live opt-in is flagged with
     // the warning icon (it stays mode=paper, so a Live filter would miss it).
     if (e.live_optin_revoked) {
-      return `<span class="copy-activity-desc"><i data-lucide="alert-triangle" aria-hidden="true"></i> Wallet paused — ${base}. Live trading opt-in was revoked.</span>`;
+      return `<span class="copy-activity-desc"><i data-lucide="alert-triangle" aria-hidden="true"></i> ${pausedWord} — ${base}. Live trading opt-in was revoked.</span>`;
     }
-    return `<span class="copy-activity-desc">Wallet paused — ${base}</span>`;
+    return `<span class="copy-activity-desc">${pausedWord} — ${base}</span>`;
   }
   // Live events (issue #1188) -- market + stage-specific detail; the
   // reason text (skip_reason/rejected_reason) already arrives plain-
@@ -9063,7 +9085,8 @@ function _copyActivityItemHtml(e) {
   // fixed label instead of an empty/truncated address.
   const addrLabel = kind === 'none' ? 'Live CLOB wallet' : _copyTruncateAddress(e.address);
   const revokedSuffix = e.live_optin_revoked ? ', live trading opt-in revoked' : '';
-  const ariaLabel = kind === 'none' ? label : `${label} for ${addrEsc}${revokedSuffix}, click to view wallet detail`;
+  const ariaWord = e.event_type === 'wallet_paused' ? _copyActivityPausedWord(e) : label;
+  const ariaLabel = kind === 'none' ? label : `${ariaWord} for ${addrEsc}${revokedSuffix}, click to view wallet detail`;
   return `
     <div class="copy-activity-item ${modeCls}" role="button" tabindex="0"
          data-kind="${kind}" data-address="${addrEsc}"

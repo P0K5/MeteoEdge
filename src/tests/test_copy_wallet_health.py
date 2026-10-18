@@ -115,6 +115,7 @@ class TestStabilityCheckPause:
         row = db.get_followed_wallets()[0]
         assert row["status"] == "paused"
         assert row["paused_reason"] == "stability_check_failed"
+        assert row["paused_by"] == "health_job"  # issue #1403
 
     def test_no_screening_history_is_left_alone(self):
         db = _db()
