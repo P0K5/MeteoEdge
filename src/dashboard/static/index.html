@@ -2387,11 +2387,24 @@ let _closedPage = 0;
 let _closedExpandedIds = new Set();   // token_ids with an open chart panel
 let _closedNewIds = new Set();        // token_ids added by the most recent merge, pending highlight
 
+// #1473: signature of the last positions list passed to renderClosed(), so a
+// 30s poll that returns identical data is a no-op instead of resetting the
+// page / collapsing open charts. Tracked separately from _closedAll because
+// mergeClosedFromWallet() adds wallet-only rows to _closedAll that the history
+// endpoint never returns.
+let _closedSig = null;
+
 function renderClosed(positions) {
+  const sig = JSON.stringify(positions);
+  if (sig === _closedSig) return; // nothing changed -- keep page and expanded charts
+  _closedSig = sig;
   _closedAll = positions;
-  _closedPage = 0;
-  _closedExpandedIds.clear();
   _closedNewIds.clear();
+  // Keep the operator's page (clamped if the list shrank) and expanded charts;
+  // drop expanded ids whose position is no longer in the list.
+  const ids = new Set(positions.map(p => p.token_id));
+  _closedExpandedIds.forEach(id => { if (!ids.has(id)) _closedExpandedIds.delete(id); });
+  _closedPage = Math.max(0, Math.min(_closedPage, Math.ceil(positions.length / CLOSED_PAGE_SIZE) - 1));
   document.getElementById('closed-count').textContent = positions.length;
   _renderClosedPage();
 }
