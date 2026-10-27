@@ -1,0 +1,15 @@
+[Unit]
+Description=MeteoEdge connectivity watchdog (reboot on sustained outbound network loss)
+After=network-online.target
+Wants=network-online.target
+Documentation=file:///home/p0k5/MeteoEdge/docs/DEPLOY_CONNECTIVITY_WATCHDOG.md
+
+[Service]
+Type=oneshot
+User=p0k5
+WorkingDirectory=/home/p0k5/MeteoEdge
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/home/p0k5/MeteoEdge/.env
+ExecStart=/home/p0k5/MeteoEdge/.venv/bin/python -u /home/p0k5/MeteoEdge/scripts/connectivity_watchdog.py
+StandardOutput=journal
+StandardError=journal
