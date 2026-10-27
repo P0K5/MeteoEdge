@@ -1,0 +1,12 @@
+[Unit]
+Description=Run MeteoEdge connectivity watchdog every 2 minutes
+Documentation=file:///home/p0k5/MeteoEdge/docs/DEPLOY_CONNECTIVITY_WATCHDOG.md
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+AccuracySec=15s
+Persistent=false
+
+[Install]
+WantedBy=timers.target
