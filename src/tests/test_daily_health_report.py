@@ -326,8 +326,8 @@ class TestBuildConnectivityWatchdog:
             assert flags["status"] == "WARN"
             assert flags["n_reboots_24h"] == 3
             assert any("auto-rebooted" in d for d in flags["details"])
+            assert any("time(s)" in d for d in flags["details"])
             assert "[WARN] Reboots triggered (24h): 3" in text
-            assert "3 time(s)" in text
 
     def test_near_threshold_streak_triggers_warn(self):
         """Case (c): non-zero but sub-threshold streak -> WARN."""

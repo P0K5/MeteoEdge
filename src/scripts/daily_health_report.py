@@ -1841,6 +1841,7 @@ def _build_connectivity_watchdog(db, today: datetime) -> "tuple[list[str], dict]
 
         if n_reboots is None:
             lines.append("  Reboots triggered (24h): (unavailable -- journalctl query error)")
+            flags["status"] = "UNKNOWN"
         else:
             flags["n_reboots_24h"] = n_reboots
             if n_reboots:
