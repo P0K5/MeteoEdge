@@ -29,6 +29,7 @@ from src.scripts.daily_health_report import (
     TABLE_LIVENESS_QUIET_OK,  # noqa: E402
     TABLE_LIVENESS_SPECS,  # noqa: E402
     _build_bot_health,
+    _build_connectivity_watchdog,
     _build_header,
     _build_param_change_impact,
     _build_silent_failures,
@@ -263,6 +264,192 @@ class TestBuildBotHealth:
         assert flags["status"] == "OK"
         assert "[OK] Healthy" in text
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# _build_connectivity_watchdog (issue #1491)
+# ---------------------------------------------------------------------------
+
+class TestBuildConnectivityWatchdog:
+    """Tests for the connectivity watchdog health report section.
+
+    Covers: (a) 0 reboots + healthy streak -> OK, no WARN; (b) N reboots in
+    the window -> WARN with the count surfaced; (c) non-zero but sub-threshold
+    streak -> WARN, not a reboot count; (d) missing state file -> informational,
+    not WARN; (e) journalctl subprocess failure -> "(unavailable)", not a crash,
+    not a false OK.
+    """
+
+    def test_healthy_streak_and_no_reboots_is_ok(self):
+        """Case (a): 0 consecutive failures + 0 reboots in 24h -> OK, no WARN."""
+        db = _mock_db()
+        today = datetime(2026, 10, 27, 14, 0, 0, tzinfo=timezone.utc)
+
+        state_file_content = {"consecutive_failures": 0}
+
+        with patch("src.scripts.daily_health_report._WATCHDOG_STATE_FILE") as mock_state, \
+             patch("subprocess.run") as mock_run:
+            mock_state.read_text.return_value = '{"consecutive_failures": 0}'
+
+            # journalctl returns no matching lines
+            mock_proc = MagicMock()
+            mock_proc.stdout = ""
+            mock_run.return_value = mock_proc
+
+            lines, flags = _build_connectivity_watchdog(db, today)
+            text = "\n".join(lines)
+
+            assert flags["status"] == "OK"
+            assert flags["details"] == []
+            assert flags["n_reboots_24h"] == 0
+            assert "0/6 (healthy)" in text
+            assert "Reboots triggered (24h): 0" in text
+            assert "[WARN]" not in text
+
+    def test_multiple_reboots_in_24h_triggers_warn(self):
+        """Case (b): N reboots in the last 24h -> WARN with count in details."""
+        db = _mock_db()
+        today = datetime(2026, 10, 27, 14, 0, 0, tzinfo=timezone.utc)
+
+        with patch("src.scripts.daily_health_report._WATCHDOG_STATE_FILE") as mock_state, \
+             patch("subprocess.run") as mock_run:
+            mock_state.read_text.return_value = '{"consecutive_failures": 0}'
+
+            # journalctl returns 3 reboots
+            mock_proc = MagicMock()
+            mock_proc.stdout = "REBOOTING\nREBOOTING\nREBOOTING\n"
+            mock_run.return_value = mock_proc
+
+            lines, flags = _build_connectivity_watchdog(db, today)
+            text = "\n".join(lines)
+
+            assert flags["status"] == "WARN"
+            assert flags["n_reboots_24h"] == 3
+            assert any("auto-rebooted" in d for d in flags["details"])
+            assert any("time(s)" in d for d in flags["details"])
+            assert "[WARN] Reboots triggered (24h): 3" in text
+
+    def test_near_threshold_streak_triggers_warn(self):
+        """Case (c): non-zero but sub-threshold streak -> WARN."""
+        db = _mock_db()
+        today = datetime(2026, 10, 27, 14, 0, 0, tzinfo=timezone.utc)
+
+        with patch("src.scripts.daily_health_report._WATCHDOG_STATE_FILE") as mock_state, \
+             patch("subprocess.run") as mock_run, \
+             patch.dict("os.environ", {"CONNECTIVITY_WATCHDOG_FAILURE_THRESHOLD": "6"}):
+            mock_state.read_text.return_value = '{"consecutive_failures": 5}'
+
+            # journalctl returns no reboots
+            mock_proc = MagicMock()
+            mock_proc.stdout = ""
+            mock_run.return_value = mock_proc
+
+            lines, flags = _build_connectivity_watchdog(db, today)
+            text = "\n".join(lines)
+
+            assert flags["status"] == "WARN"
+            assert flags["n_reboots_24h"] == 0
+            assert any("consecutive failures" in d for d in flags["details"])
+            assert "[WARN] Current failure streak: 5/6" in text
+            assert "host may be degraded" in text
+
+    def test_missing_state_file_is_informational_not_warn(self):
+        """Case (d): missing state file -> informational, not WARN."""
+        db = _mock_db()
+        today = datetime(2026, 10, 27, 14, 0, 0, tzinfo=timezone.utc)
+
+        with patch("src.scripts.daily_health_report._WATCHDOG_STATE_FILE") as mock_state, \
+             patch("subprocess.run") as mock_run:
+            mock_state.read_text.side_effect = FileNotFoundError("no state file")
+
+            # journalctl call still succeeds
+            mock_proc = MagicMock()
+            mock_proc.stdout = ""
+            mock_run.return_value = mock_proc
+
+            lines, flags = _build_connectivity_watchdog(db, today)
+            text = "\n".join(lines)
+
+            assert flags["status"] == "OK"
+            assert flags["details"] == []
+            assert "no state file" in text
+            assert "[WARN]" not in text
+
+    def test_journalctl_subprocess_failure_is_unavailable(self):
+        """Case (e): journalctl subprocess error -> (unavailable), not OK, not crash."""
+        db = _mock_db()
+        today = datetime(2026, 10, 27, 14, 0, 0, tzinfo=timezone.utc)
+
+        with patch("src.scripts.daily_health_report._WATCHDOG_STATE_FILE") as mock_state, \
+             patch("subprocess.run") as mock_run:
+            mock_state.read_text.return_value = '{"consecutive_failures": 0}'
+
+            # journalctl command fails (e.g., binary missing, timeout)
+            mock_run.side_effect = OSError("journalctl not found")
+
+            lines, flags = _build_connectivity_watchdog(db, today)
+            text = "\n".join(lines)
+
+            assert flags["status"] == "UNKNOWN"
+            assert flags["details"] == []
+            assert "unavailable" in text
+            assert "[WARN]" not in text
+
+    def test_malformed_state_file_json_degrades_gracefully(self):
+        """Malformed JSON in state file should not crash, should degrade."""
+        db = _mock_db()
+        today = datetime(2026, 10, 27, 14, 0, 0, tzinfo=timezone.utc)
+
+        with patch("src.scripts.daily_health_report._WATCHDOG_STATE_FILE") as mock_state, \
+             patch("subprocess.run") as mock_run:
+            mock_state.read_text.return_value = "not valid json"
+
+            # journalctl succeeds
+            mock_proc = MagicMock()
+            mock_proc.stdout = ""
+            mock_run.return_value = mock_proc
+
+            lines, flags = _build_connectivity_watchdog(db, today)
+            text = "\n".join(lines)
+
+            assert flags["status"] == "OK"
+            assert "no state file" in text
+
+    def test_custom_threshold_from_env_var(self):
+        """The threshold can be customized via CONNECTIVITY_WATCHDOG_FAILURE_THRESHOLD env var."""
+        db = _mock_db()
+        today = datetime(2026, 10, 27, 14, 0, 0, tzinfo=timezone.utc)
+
+        with patch("src.scripts.daily_health_report._WATCHDOG_STATE_FILE") as mock_state, \
+             patch("subprocess.run") as mock_run, \
+             patch.dict("os.environ", {"CONNECTIVITY_WATCHDOG_FAILURE_THRESHOLD": "10"}):
+            mock_state.read_text.return_value = '{"consecutive_failures": 9}'
+
+            # journalctl returns no reboots
+            mock_proc = MagicMock()
+            mock_proc.stdout = ""
+            mock_run.return_value = mock_proc
+
+            lines, flags = _build_connectivity_watchdog(db, today)
+            text = "\n".join(lines)
+
+            assert "[WARN] Current failure streak: 9/10" in text
+
+    def test_verdict_includes_connectivity_watchdog_warnings(self):
+        """Verify _build_verdict integrates connectivity_watchdog flags correctly."""
+        # Create sections with connectivity_watchdog warnings
+        sections = [
+            ("services", ["Services", "-" * 8, "  OK", ""], {"status": "OK", "details": []}),
+            ("connectivity_watchdog",
+             ["Connectivity Watchdog", "-" * 21, "[WARN] something", ""],
+             {"status": "WARN", "details": ["connectivity watchdog at 5/6 consecutive failures"]}),
+        ]
+
+        verdict_lines = _build_verdict(sections)
+        verdict_text = "\n".join(verdict_lines)
+
+        # The warning should be included in the verdict
+        assert any("consecutive failures" in line for line in verdict_lines)
 
 
 # ---------------------------------------------------------------------------

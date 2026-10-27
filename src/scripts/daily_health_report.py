@@ -1779,6 +1779,92 @@ def _build_job_heartbeat(db, today: datetime) -> "tuple[list[str], dict]":
     return lines, flags
 
 
+#: Mirrors scripts/connectivity_watchdog.py's own defaults -- not imported
+#: from there directly because that module chdir()s and mutates sys.path as
+#: an import-time side effect (fine for its own standalone invocation via
+#: the timer, not something this report's process should trigger).
+_WATCHDOG_STATE_FILE = Path(__file__).resolve().parents[2] / "data" / "connectivity_watchdog_state.json"
+_WATCHDOG_UNIT = "meteoedge-connectivity-watchdog.service"
+_WATCHDOG_DEFAULT_THRESHOLD = 6
+
+
+def _build_connectivity_watchdog(db, today: datetime) -> "tuple[list[str], dict]":
+    """Connectivity watchdog status (issue #1491): did it have to auto-reboot
+    the host in the last 24h, and how close the current failure streak is to
+    doing so. A missing state file or unit (e.g. not yet deployed on this
+    host) is reported informationally, not as a WARN -- only an actual
+    reboot, or a live near-threshold streak, is."""
+    lines = ["Connectivity Watchdog", "-" * 21]
+    flags: dict = {"status": "OK", "details": [], "n_reboots_24h": 0}
+    try:
+        import json
+        import subprocess
+
+        threshold = int(os.getenv(
+            "CONNECTIVITY_WATCHDOG_FAILURE_THRESHOLD", str(_WATCHDOG_DEFAULT_THRESHOLD)
+        ))
+
+        consecutive = None
+        try:
+            state = json.loads(_WATCHDOG_STATE_FILE.read_text())
+            consecutive = int(state.get("consecutive_failures", 0))
+        except (FileNotFoundError, json.JSONDecodeError, OSError, ValueError):
+            pass
+
+        if consecutive is None:
+            lines.append("  (no state file -- watchdog not installed or hasn't run on this host)")
+        elif consecutive == 0:
+            lines.append(f"  Current failure streak: 0/{threshold} (healthy)")
+        else:
+            lines.append(
+                f"  [WARN] Current failure streak: {consecutive}/{threshold} -- "
+                "host may be degraded or close to an auto-reboot"
+            )
+            flags["details"].append(
+                f"connectivity watchdog at {consecutive}/{threshold} consecutive failures"
+            )
+
+        since = (today - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S UTC")
+        try:
+            proc = subprocess.run(
+                ["journalctl", "-u", _WATCHDOG_UNIT, "--since", since,
+                 "-g", "REBOOTING", "--no-pager", "-o", "cat"],
+                capture_output=True, text=True, timeout=_SYSTEMCTL_TIMEOUT_S,
+            )
+            # journalctl's exit code for "no matches" varies by version/grep
+            # mode -- count stdout lines rather than branch on returncode; a
+            # genuine query failure (binary missing, timeout) is caught below
+            # and reported as unavailable instead of silently reading as 0.
+            n_reboots = len([line for line in proc.stdout.splitlines() if line.strip()])
+        except (OSError, subprocess.TimeoutExpired):
+            n_reboots = None
+
+        if n_reboots is None:
+            lines.append("  Reboots triggered (24h): (unavailable -- journalctl query error)")
+            flags["status"] = "UNKNOWN"
+        else:
+            flags["n_reboots_24h"] = n_reboots
+            if n_reboots:
+                lines.append(
+                    f"  [WARN] Reboots triggered (24h): {n_reboots} -- host was unreachable "
+                    f"long enough to auto-reboot; see journalctl -u {_WATCHDOG_UNIT} for timestamps"
+                )
+                flags["details"].append(
+                    f"connectivity watchdog auto-rebooted the host {n_reboots} time(s) in 24h"
+                )
+            else:
+                lines.append("  Reboots triggered (24h): 0")
+
+        if flags["details"]:
+            flags["status"] = "WARN"
+    except Exception:
+        log.exception("Connectivity watchdog query failed")
+        lines.append("  (unavailable -- query error)")
+        flags = {"status": "UNKNOWN", "details": [], "n_reboots_24h": 0}
+    lines.append("")
+    return lines, flags
+
+
 def _build_blockers(db, today: datetime) -> list[str]:
     """Known open issues status check."""
     lines = ["Open Blockers", "-" * 8]
@@ -1864,6 +1950,9 @@ def _build_verdict(sections: "list[tuple[str, list[str], dict]]") -> list[str]:
     # issue #1422: overdue / failed / inactive scheduled jobs.
     warn_issues.extend(flags_by_section.get("job_heartbeat", {}).get("details", []))
 
+    # issue #1491: connectivity watchdog auto-reboot (or a live near-threshold streak).
+    warn_issues.extend(flags_by_section.get("connectivity_watchdog", {}).get("details", []))
+
     copy_stuck_flags = flags_by_section.get("copy_stuck", {})
     if copy_stuck_flags.get("n_stuck"):
         warn_issues.append(
@@ -1921,6 +2010,7 @@ def build_report(db) -> str:
     for name, builder in [
         ("services", _build_services),
         ("job_heartbeat", _build_job_heartbeat),
+        ("connectivity_watchdog", _build_connectivity_watchdog),
         ("bot", _build_bot_health),
         ("table_liveness", _build_table_liveness),
         ("trading", _build_trading),
