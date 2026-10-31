@@ -40,9 +40,9 @@ httpx>=0.24.0  # required by fastapi TestClient
 pydantic>=1.10.0
 
 # Development
-pytest>=7.0  # For testing
-pytest-cov>=4.0  # Coverage reports
-pytest-xdist>=3.0  # Parallel test execution
+pytest==9.1.1  # For testing — pinned 2026-10-31 (#1498): 9.2.0 kills the CI runner at startup
+pytest-cov==7.1.0  # Coverage reports — pinned alongside pytest (#1498)
+pytest-xdist==3.8.0  # Parallel test execution — pinned alongside pytest (#1498)
 black>=23.0  # Code formatting
 mypy>=1.0  # Type checking
 flake8>=6.0  # Linting
