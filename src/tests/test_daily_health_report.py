@@ -24,12 +24,14 @@ if str(_HERE.parents[1]) not in sys.path:
     sys.path.insert(0, str(_HERE.parents[1]))
 
 from src.scripts.daily_health_report import (
+    EMOS_PRIMARY_STALENESS_WARN_DAYS,  # noqa: E402
     HIGH_RAIL_WARN_RATIO,  # noqa: E402
     M3_CLEAN_DATA_CLOCK_START,  # noqa: E402
     TABLE_LIVENESS_QUIET_OK,  # noqa: E402
     TABLE_LIVENESS_SPECS,  # noqa: E402
     _build_bot_health,
     _build_connectivity_watchdog,
+    _build_emos_progress,
     _build_header,
     _build_param_change_impact,
     _build_silent_failures,
@@ -599,6 +601,93 @@ class TestBuildVerdictTableLiveness:
         text = "\n".join(result)
         assert "[OK] Healthy" in text
         assert "stalled" not in text
+
+
+# ---------------------------------------------------------------------------
+# _build_emos_progress — emos_primary staleness safety net (issue #1495)
+# ---------------------------------------------------------------------------
+
+class TestBuildEmosProgressStaleness:
+    def _db(self):
+        from src.data.db import Database
+        return Database(":memory:")
+
+    def _seed_primary(self, db, city, trained_at):
+        db.upsert_emos_coefficients(
+            city=city, model_mode="emos_primary",
+            a=0.0, b=1.0, c=0.5, d=1.0,
+            crps_score=1.0, trained_at=trained_at,
+            ready_for_promotion=0,
+        )
+        db.set_emos_effective_mode(city, "emos_primary")
+
+    def test_no_promoted_cities_is_quiet(self):
+        db = self._db()
+        lines, flags = _build_emos_progress(db, datetime.now(timezone.utc))
+        assert flags["status"] == "OK"
+        assert flags["details"] == []
+        assert not any("stale" in ln.lower() for ln in lines)
+
+    def test_fresh_primary_row_stays_quiet(self):
+        db = self._db()
+        now = datetime.now(timezone.utc)
+        self._seed_primary(db, "Miami", now.isoformat())
+        lines, flags = _build_emos_progress(db, now)
+        assert flags["status"] == "OK"
+        assert flags["details"] == []
+        assert any("[OK] all promoted cities" in ln for ln in lines)
+
+    def test_stale_primary_row_warns_naming_the_city(self):
+        db = self._db()
+        now = datetime.now(timezone.utc)
+        old = now - timedelta(days=EMOS_PRIMARY_STALENESS_WARN_DAYS + 1)
+        self._seed_primary(db, "Miami", old.isoformat())
+        lines, flags = _build_emos_progress(db, now)
+        assert flags["status"] == "WARN"
+        assert any("Miami" in d and "stale" in d for d in flags["details"])
+        assert any("[WARN]" in ln and "Miami" in ln for ln in lines)
+
+    def test_boundary_just_inside_window_is_quiet(self):
+        db = self._db()
+        now = datetime.now(timezone.utc)
+        just_inside = now - timedelta(days=EMOS_PRIMARY_STALENESS_WARN_DAYS - 0.1)
+        self._seed_primary(db, "Miami", just_inside.isoformat())
+        _lines, flags = _build_emos_progress(db, now)
+        assert flags["status"] == "OK"
+
+    def test_boundary_just_outside_window_warns(self):
+        db = self._db()
+        now = datetime.now(timezone.utc)
+        just_outside = now - timedelta(days=EMOS_PRIMARY_STALENESS_WARN_DAYS + 0.1)
+        self._seed_primary(db, "Miami", just_outside.isoformat())
+        _lines, flags = _build_emos_progress(db, now)
+        assert flags["status"] == "WARN"
+
+    def test_promoted_city_with_no_primary_row_warns(self):
+        """Override says emos_primary but no row exists under the active
+        track -- a gap, not silence; must WARN rather than be skipped."""
+        db = self._db()
+        db.set_emos_effective_mode("Miami", "emos_primary")
+        lines, flags = _build_emos_progress(db, datetime.now(timezone.utc))
+        assert flags["status"] == "WARN"
+        assert any("Miami" in d for d in flags["details"])
+        assert any("Miami" in ln for ln in lines)
+
+    def test_non_promoted_city_never_checked(self):
+        db = self._db()
+        db.set_emos_effective_mode("Denver", "emos_shadow")
+        lines, flags = _build_emos_progress(db, datetime.now(timezone.utc))
+        assert flags["status"] == "OK"
+        assert not any("Denver" in ln for ln in lines)
+
+    def test_verdict_surfaces_emos_staleness_warn(self):
+        sections = [("emos", ["EMOS Status", "  [WARN] Miami: emos_primary 10.0d stale"],
+                     {"status": "WARN",
+                      "details": ["emos_primary stale -- Miami: emos_primary 10.0d stale"]})]
+        result = _build_verdict(sections)
+        text = "\n".join(result)
+        assert "[WARN]" in text
+        assert "Miami" in text
 
 
 # ---------------------------------------------------------------------------

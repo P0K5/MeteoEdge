@@ -989,3 +989,127 @@ class TestPooledFallbackInRunner:
 
         assert db.get_emos_coefficients("London", "emos_shadow") is None
         assert db.get_emos_coefficients("Paris", "emos_shadow") is None
+
+
+# ---------------------------------------------------------------------------
+# Daily emos_primary refresh for promoted cities (issue #1495)
+# ---------------------------------------------------------------------------
+
+class TestRunnerRefreshesPromotedPrimary:
+    """``_refresh_primary`` keeps an already-promoted city's ``emos_primary``
+    row current from each day's shadow fit, instead of serving whatever the
+    dashboard's manual promote wrote once and never touching it again."""
+
+    _STATIONS = [
+        ("KORD", 41.9742, -87.9073, "Chicago", "KORD", "F", "America/Chicago"),
+        ("KMIA", 25.7959, -80.2870, "Miami", "KMIA", "F", "America/New_York"),
+    ]
+
+    # Off-by-one raw triples: mu=80, sigma=2.0, y=81 repeated to clear
+    # FULL_WEIGHT_SAMPLES (60) for a pure per-city fit.
+    _TRIPLES = [(80.0, 2.0, 81.0)] * 60
+
+    def _setup(self, monkeypatch, db, fit_abcd):
+        monkeypatch.setattr("src.config.STATIONS", self._STATIONS)
+        monkeypatch.setattr(
+            "src.model.emos_calibration.fetch_training_data",
+            lambda city, db, **kw: list(self._TRIPLES),
+        )
+        monkeypatch.setattr(
+            "src.model.emos_calibration.fit_emos", lambda data: fit_abcd
+        )
+
+    def _seed_primary(self, db, city="Chicago", **kw):
+        defaults = dict(
+            city=city, model_mode="emos_primary",
+            a=-1.0, b=1.0, c=1.0, d=1.0,
+            crps_score=5.0, trained_at="2026-10-10T09:54:00+00:00",
+            ready_for_promotion=0,
+        )
+        defaults.update(kw)
+        db.upsert_emos_coefficients(**defaults)
+        db.set_emos_effective_mode(city, "emos_primary")
+
+    def test_refresh_when_fresh_fit_beats_legacy_crps(self, monkeypatch):
+        """a=1,b=1,c=0,d=1 re-centers mu exactly on y (81), beating the
+        legacy (uncorrected, off-by-one) CRPS on the same triples."""
+        import scripts.run_emos_shadow as runner
+
+        db = _db()
+        self._seed_primary(db)
+        self._setup(monkeypatch, db, (1.0, 1.0, 0.0, 1.0))
+
+        runner._run_calibration(db)
+
+        row = db.get_emos_coefficients("Chicago", "emos_primary")
+        assert row["a"] == pytest.approx(1.0)
+        assert row["b"] == pytest.approx(1.0)
+        assert row["c"] == pytest.approx(0.0)
+        assert row["d"] == pytest.approx(1.0)
+        assert row["trained_at"] != "2026-10-10T09:54:00+00:00"
+
+    def test_guard_failure_keeps_old_primary_row(self, monkeypatch, caplog):
+        """a=-1,b=1,c=0,d=1 pushes mu further from y (79 vs y=81) than the
+        legacy raw mu (80) -- worse CRPS, so the guard must refuse the
+        refresh and leave the existing primary row untouched."""
+        import logging
+        import scripts.run_emos_shadow as runner
+
+        db = _db()
+        self._seed_primary(db)
+        self._setup(monkeypatch, db, (-1.0, 1.0, 0.0, 1.0))
+
+        with caplog.at_level(logging.WARNING):
+            runner._run_calibration(db)
+
+        row = db.get_emos_coefficients("Chicago", "emos_primary")
+        assert row["a"] == pytest.approx(-1.0)  # the ORIGINAL seeded value
+        assert row["trained_at"] == "2026-10-10T09:54:00+00:00"
+        assert any("refresh SKIPPED" in r.message for r in caplog.records)
+
+    def test_non_promoted_city_is_untouched(self, monkeypatch):
+        """Miami has shadow evidence fitted same as Chicago but no
+        emos_primary override -- it must never get a primary row from this
+        refresh (it only refreshes cities already promoted)."""
+        import scripts.run_emos_shadow as runner
+
+        db = _db()
+        self._seed_primary(db, city="Chicago")
+        self._setup(monkeypatch, db, (1.0, 1.0, 0.0, 1.0))
+
+        runner._run_calibration(db)
+
+        assert db.get_emos_coefficients("Miami", "emos_primary") is None
+
+    def test_only_existing_bins_are_refreshed(self, monkeypatch):
+        """The runner only ever fits lead_hours=24. A city promoted at a
+        DIFFERENT bin (e.g. 6h, no 24h primary row yet) must be left alone --
+        refreshing would silently start serving a bin #1453 hasn't EV-gated."""
+        import scripts.run_emos_shadow as runner
+
+        db = _db()
+        self._seed_primary(db, lead_hours=6)
+        self._setup(monkeypatch, db, (1.0, 1.0, 0.0, 1.0))
+
+        runner._run_calibration(db)
+
+        # The 6h row is untouched.
+        six_hour = db.get_emos_coefficients("Chicago", "emos_primary", lead_hours=6)
+        assert six_hour["a"] == pytest.approx(-1.0)
+        assert six_hour["trained_at"] == "2026-10-10T09:54:00+00:00"
+        # No new 24h primary row was created either.
+        assert db.get_emos_coefficients("Chicago", "emos_primary", lead_hours=24) is None
+
+    def test_dashboard_promote_still_works_via_shared_helper(self, monkeypatch):
+        """Sanity check that the daily refresh and the dashboard promote path
+        (src/dashboard/api.py:emos_promote) write through the SAME helper
+        without interfering with each other's behaviour."""
+        from src.model.emos_mode import copy_shadow_to_primary
+
+        db = _db()
+        shadow = {"a": 2.0, "b": 1.0, "c": 0.5, "d": 1.0, "crps_score": 1.0,
+                  "trained_at": "2026-10-31T00:00:00+00:00"}
+        copy_shadow_to_primary(db, "Houston", shadow)
+        row = db.get_emos_coefficients("Houston", "emos_primary")
+        assert row["a"] == pytest.approx(2.0)
+        assert row["ready_for_promotion"] == 0

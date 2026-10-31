@@ -387,3 +387,49 @@ def _check_ready_for_promotion(city: str, db) -> bool:
         return _primary_allowed(city, db)
     row = db.get_emos_coefficients(city, "emos_primary")
     return row is not None and row.get("ready_for_promotion") == 1
+
+
+def copy_shadow_to_primary(
+    db, city: str, shadow: dict, *,
+    lead_hours: int = 24,
+    forecast_source: "str | None" = None,
+    sigma_source: "str | None" = None,
+) -> None:
+    """Copy a shadow EMOS coefficient row into the matching emos_primary row.
+
+    Shared by the dashboard's manual promote (src/dashboard/api.py:emos_promote)
+    and the daily auto-refresh (scripts/run_emos_shadow.py, issue #1495) so both
+    paths write the primary row under EXACTLY the same keys serving reads
+    (``get_emos_coefficients``/``get_emos_coefficients_by_lead``) — same
+    ``forecast_source``/``sigma_source``/``lead_hours`` resolution as
+    ``upsert_emos_coefficients`` itself (``None`` resolves to the DB's active
+    FORECAST_STACK/USE_ENSEMBLE_SIGMA track, same as every other
+    read/write here). Passing mismatched keys here would reproduce the
+    #658/#799-style train/serve skew those issues already closed.
+
+    *shadow* is a coefficients dict as returned by ``get_emos_coefficients``
+    (keys: ``a``, ``b``, ``c``, ``d``, and optionally ``crps_score``,
+    ``trained_at``) — the exact-row read a caller already did to decide this
+    copy should happen. ``ready_for_promotion`` is always written as 0 on the
+    new primary row, mirroring the pre-#1495 promote behaviour: it is a
+    shadow-row-only flag, meaningless once copied to primary.
+
+    Deliberately does NOT touch ``emos_mode_override`` — callers that are
+    actually promoting a city (not just refreshing an already-promoted one)
+    must call ``db.set_emos_effective_mode(city, "emos_primary")`` themselves,
+    same as ``emos_promote`` always has.
+    """
+    db.upsert_emos_coefficients(
+        city=city,
+        model_mode="emos_primary",
+        a=shadow["a"],
+        b=shadow["b"],
+        c=shadow["c"],
+        d=shadow["d"],
+        crps_score=shadow.get("crps_score"),
+        trained_at=shadow.get("trained_at"),
+        ready_for_promotion=0,
+        forecast_source=forecast_source,
+        sigma_source=sigma_source,
+        lead_hours=lead_hours,
+    )

@@ -4743,6 +4743,23 @@ class Database:
             )
             self._conn.commit()
 
+    def get_cities_with_effective_mode(self, effective_mode: str) -> "list[str]":
+        """Return every city whose ``emos_mode_override`` row equals *effective_mode*.
+
+        Generic lookup over the operator-override table, so callers that need
+        "which cities are currently promoted to emos_primary" (the daily
+        auto-refresh in scripts/run_emos_shadow.py, and the health-report
+        staleness check — issue #1495) read the live set of promoted cities
+        instead of a hardcoded list that would drift the moment a city is
+        promoted or demoted after the fact.
+        """
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT city FROM emos_mode_override WHERE effective_mode=?",
+                (effective_mode,),
+            )
+            return [row[0] for row in cur.fetchall()]
+
     def toggle_emos_ready_for_promotion(
         self,
         city: str,
