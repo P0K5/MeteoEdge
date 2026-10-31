@@ -83,6 +83,7 @@ from src.data.nws import fetch_nws_forecast_high
 from src.data.polymarket import get_orderbook
 from src.data.taf_disruption import check_taf_disruption
 from src.execution.live_trader import LiveTrader
+from src.model.emos_mode import copy_shadow_to_primary
 from src.execution.order_manager import order_manager
 from src.dashboard.data import read_jsonl, load_live_trades, load_snapshots, load_position_snapshots
 from src.utils.log_rotation import iter_rotated_jsonl, rotated_sources
@@ -2688,18 +2689,9 @@ def emos_promote(city: str) -> EmosCityStatus:
             ),
         )
 
-    # Copy shadow → primary
-    _db.upsert_emos_coefficients(
-        city=canonical_city,
-        model_mode="emos_primary",
-        a=shadow["a"],
-        b=shadow["b"],
-        c=shadow["c"],
-        d=shadow["d"],
-        crps_score=shadow.get("crps_score"),
-        trained_at=shadow.get("trained_at"),
-        ready_for_promotion=0,
-    )
+    # Copy shadow → primary (shared helper, issue #1495 — also used by the
+    # daily auto-refresh in scripts/run_emos_shadow.py).
+    copy_shadow_to_primary(_db, canonical_city, shadow)
     _db.set_emos_effective_mode(canonical_city, "emos_primary")
 
     # Promotion-time guardrail: the interim overconfidence cap (issue #305) keeps

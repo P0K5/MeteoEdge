@@ -36,6 +36,16 @@ weighted by how many of the city's own triples are available
 per-city fit (identical to the pre-#798 behaviour); everywhere in between
 gets a smooth mix instead of the old all-or-nothing switch.
 
+After each city's shadow fit, cities already promoted to ``emos_primary``
+(operator override in ``emos_mode_override``) have their primary coefficients
+refreshed from that SAME fresh fit — see ``_refresh_primary`` (issue #1495).
+Before this, the daily refit only ever updated ``emos_shadow``; the 7
+promoted cities kept serving whatever coefficients the dashboard's manual
+promote wrote once, drifting further from current weather every day with
+nothing refreshing or alerting on it. The refresh is guarded (fresh CRPS must
+beat legacy CRPS on the city's own triples) and scoped to bins that already
+have a primary row (today: 24h only) — see ``_refresh_primary``'s docstring.
+
     python scripts/run_emos_shadow.py [--db-path PATH]
 """
 import argparse
@@ -82,6 +92,7 @@ def _run_calibration(db, stack: str = "baseline") -> None:
         save_coefficients,
         InsufficientDataError,
     )
+    from src.model.emos_mode import copy_shadow_to_primary
 
     regime = FORECAST_STACK_MODELS.get(stack, FORECAST_STACK_MODELS["baseline"])
     log.info("[emos_shadow] FORECAST_STACK=%s, regime=%s", stack, sorted(regime))
@@ -180,6 +191,75 @@ def _run_calibration(db, stack: str = "baseline") -> None:
             "[emos_shadow] city=%s: %s fit, coefficients saved "
             "(crps=%.4f, legacy_crps=%.4f, n_city=%d)",
             city, provenance, mean_crps, legacy_mean_crps, len(training_data),
+        )
+
+        _refresh_primary(city, a, b, c, d, mean_crps, legacy_mean_crps)
+
+    def _refresh_primary(city, a, b, c, d, crps_score, legacy_crps_score):
+        """Refresh *city*'s emos_primary row(s) from today's shadow fit (issue #1495).
+
+        Runs only for cities whose effective mode (``emos_mode_override``) is
+        already ``emos_primary`` — this never promotes a city on its own, it
+        only keeps an already-promoted city's primary coefficients from
+        serving frozen forever at whatever the manual dashboard promote wrote
+        (see the module docstring's #1495 cross-reference: Miami et al. were
+        found serving 2026-10-10 coefficients three weeks later).
+
+        Bin scope (requirement 4): only refreshes the ``lead_hours`` bin(s)
+        that already have an ``emos_primary`` row for this city — today that
+        is only ever 24h, since this runner only ever fits at the legacy
+        lead_hours=24 default. A city with no primary row at that bin is left
+        untouched; adding NEW bins to primary stays #1453's deliberate,
+        EV-gated decision, not something this refresh should silently start
+        serving the moment #1453 writes a shadow row at another bin.
+
+        Sanity guard (requirement 3): only refresh when the fresh EMOS fit's
+        CRPS beats the legacy (uncorrected) CRPS on the SAME training
+        triples — both already computed in ``_persist`` above. Deliberately
+        NOT a "new fit vs. old primary" comparison: the new fit is optimised
+        on these exact triples, so it would always win in-sample against
+        anything else, making that comparison meaningless as a guard.
+        """
+        if db.get_emos_effective_mode(city) != "emos_primary":
+            return
+
+        primary_bins = db.get_emos_coefficients_by_lead(
+            city, "emos_primary", forecast_source=stack, sigma_source=sigma_source,
+        )
+        if 24 not in primary_bins:
+            log.debug(
+                "[emos_shadow] city=%s: emos_primary override set but no "
+                "lead_hours=24 primary row exists yet — nothing to refresh "
+                "(bins=%s)", city, sorted(primary_bins),
+            )
+            return
+
+        if crps_score >= legacy_crps_score:
+            log.warning(
+                "[emos_shadow] city=%s: emos_primary refresh SKIPPED — fresh "
+                "CRPS %.4f does not beat legacy CRPS %.4f; keeping existing "
+                "emos_primary row unchanged",
+                city, crps_score, legacy_crps_score,
+            )
+            return
+
+        old = primary_bins[24]
+        old_crps = old.get("crps_score")
+        copy_shadow_to_primary(
+            db, city,
+            {
+                "a": a, "b": b, "c": c, "d": d,
+                "crps_score": crps_score,
+                "trained_at": datetime.now(timezone.utc).isoformat(),
+            },
+            lead_hours=24, forecast_source=stack, sigma_source=sigma_source,
+        )
+        log.info(
+            "[emos_shadow] city=%s: emos_primary REFRESHED "
+            "a=%.4f->%.4f b=%.4f->%.4f c=%.4f->%.4f d=%.4f->%.4f "
+            "crps=%s->%.4f",
+            city, old["a"], a, old["b"], b, old["c"], c, old["d"], d,
+            f"{old_crps:.4f}" if old_crps is not None else "N/A", crps_score,
         )
 
     # Minimum own triples a city must contribute before it receives ANY
