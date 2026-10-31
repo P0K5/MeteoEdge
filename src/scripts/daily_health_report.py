@@ -108,6 +108,17 @@ POLL_STALE_MINUTES = 60
 # the last 24h, even if the most recent single poll was fine.
 POLL_COUNT_WARN_RATIO = 0.7
 WIN_RATE_N = 20
+
+# issue #1495 requirement 6: staleness safety net for promoted cities'
+# emos_primary coefficients. The daily refresh (scripts/run_emos_shadow.py
+# :_refresh_primary) is expected to keep every promoted city's primary row
+# current (subject to its own CRPS guard), so trained_at should normally
+# never be more than a day or two old. 7 days tolerates the guard failing (or
+# a thin-data day skipping the fit) for up to a week without WARNing, while
+# still catching a stuck/broken refresh well within a season -- unlike the
+# #1495 incident itself, where frozen 2026-10-10 coefficients went
+# unnoticed for three weeks.
+EMOS_PRIMARY_STALENESS_WARN_DAYS = 7
 EMOS_MIN_SAMPLES_PROMOTION = 60
 
 # issue #1237: `scan_decisions` stopped receiving writes on 2026-08-28 and
@@ -1045,9 +1056,58 @@ def _build_m3_progress(db, today: datetime) -> "tuple[list[str], dict]":
     return lines, flags
 
 
-def _build_emos_progress(db, today: datetime) -> list[str]:
-    """EMOS shadow status, CRPS comparison, promotion readiness."""
+def _build_emos_progress(db, today: datetime) -> "tuple[list[str], dict]":
+    """EMOS shadow status, CRPS comparison, promotion readiness, and the
+    emos_primary staleness safety net (issue #1495 requirement 6).
+
+    Returns ``(lines, flags)``. ``flags["status"]`` is ``WARN`` when any city
+    currently promoted to ``emos_primary`` (``emos_mode_override`` table) has
+    a ``trained_at`` older than ``EMOS_PRIMARY_STALENESS_WARN_DAYS``, or no
+    ``emos_primary`` row at all under the active forecast/sigma track. The
+    daily refresh (``scripts/run_emos_shadow.py:_refresh_primary``) is
+    expected to keep every promoted city's primary row current each day it
+    clears its CRPS guard, so staleness here means that guard has been
+    failing repeatedly, or the refresh has silently stopped running
+    altogether -- exactly the failure mode #1495 was filed to stop from
+    going unnoticed again (frozen 2026-10-10 coefficients, caught only by
+    manual inspection three weeks later).
+    """
     lines = ["EMOS Status", "-" * 10]
+    flags: dict = {"status": "OK", "details": []}
+
+    # --- Staleness safety net for promoted cities (requirement 6) ---------
+    try:
+        promoted = sorted(db.get_cities_with_effective_mode("emos_primary"))
+        if promoted:
+            stale: list[str] = []
+            for city in promoted:
+                row = db.get_emos_coefficients(city, "emos_primary")
+                if row is None or not row.get("trained_at"):
+                    stale.append(f"{city}: no emos_primary row for active track")
+                    continue
+                trained_at = datetime.fromisoformat(row["trained_at"])
+                if trained_at.tzinfo is None:
+                    trained_at = trained_at.replace(tzinfo=timezone.utc)
+                age_days = (today - trained_at).total_seconds() / 86400
+                if age_days > EMOS_PRIMARY_STALENESS_WARN_DAYS:
+                    stale.append(f"{city}: emos_primary {age_days:.1f}d stale")
+
+            lines.append(f"  Promoted (emos_primary): {len(promoted)} cities")
+            if stale:
+                flags["status"] = "WARN"
+                flags["details"] = [f"emos_primary stale -- {s}" for s in stale]
+                for s in stale:
+                    lines.append(f"  [WARN] {s}")
+            else:
+                lines.append(
+                    f"  [OK] all promoted cities refreshed within "
+                    f"{EMOS_PRIMARY_STALENESS_WARN_DAYS}d"
+                )
+    except Exception:
+        log.exception("EMOS primary staleness check failed")
+        lines.append("  (emos_primary staleness check unavailable -- query error)")
+
+    # --- Shadow progress / CRPS comparison ---------------------------------
     try:
         # Get list of cities with EMOS shadow coefficients
         city_rows = db._conn.execute(
@@ -1058,7 +1118,7 @@ def _build_emos_progress(db, today: datetime) -> list[str]:
         if not cities:
             lines.append("  No cities in emos_shadow yet")
             lines.append("")
-            return lines
+            return lines, flags
 
         # Aggregate CRPS comparison (emos_shadow vs legacy model_mode)
         shadow_row = db._conn.execute(
@@ -1094,7 +1154,7 @@ def _build_emos_progress(db, today: datetime) -> list[str]:
         log.exception("EMOS progress query failed")
         lines.append("  (unavailable -- query error)")
     lines.append("")
-    return lines
+    return lines, flags
 
 
 def _build_copy_stuck(db, today: datetime) -> "tuple[list[str], dict]":
@@ -1899,12 +1959,12 @@ def _build_verdict(sections: "list[tuple[str, list[str], dict]]") -> list[str]:
 
     ``sections`` is ``[(name, lines, flags), ...]`` as assembled by
     ``build_report``. Sections that have been migrated to the flags contract
-    (currently: ``bot``, ``table_liveness``) are checked via their ``flags``
-    dict, scoped to the section that produced the condition -- this is what
-    eliminates the issue #914 defect-3 bug (a WARN anywhere in the report
-    getting attributed to an unrelated section). Full flags migration for the
-    remaining sections (``trading``, ``pipeline``, ``guardrails``, ``emos``)
-    is a natural fast-follow.
+    (currently: ``bot``, ``table_liveness``, ``emos`` -- issue #1495's
+    staleness check) are checked via their ``flags`` dict, scoped to the
+    section that produced the condition -- this is what eliminates the issue
+    #914 defect-3 bug (a WARN anywhere in the report getting attributed to an
+    unrelated section). Full flags migration for the remaining sections
+    (``trading``, ``pipeline``, ``guardrails``) is a natural fast-follow.
 
     Add new conditions here by reading ``flags_by_section`` -- this is the
     extension point for #913's error-aggregation section and CRIT path.
@@ -1952,6 +2012,11 @@ def _build_verdict(sections: "list[tuple[str, list[str], dict]]") -> list[str]:
 
     # issue #1491: connectivity watchdog auto-reboot (or a live near-threshold streak).
     warn_issues.extend(flags_by_section.get("connectivity_watchdog", {}).get("details", []))
+
+    # issue #1495: a promoted city's emos_primary coefficients going stale
+    # (the daily refresh's CRPS guard failing repeatedly, or the refresh
+    # silently stopping altogether).
+    warn_issues.extend(flags_by_section.get("emos", {}).get("details", []))
 
     copy_stuck_flags = flags_by_section.get("copy_stuck", {})
     if copy_stuck_flags.get("n_stuck"):

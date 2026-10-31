@@ -1180,3 +1180,95 @@ class TestApplyEmosPerLeadBin:
         # Omitting minutes_to_settlement -> legacy default lead_hours=24 lookup
         mu_default, _ = emos_serving_mu(state, "Denver", db, 2.0)
         assert mu_default == pytest.approx(180.0)
+
+
+# ---------------------------------------------------------------------------
+# copy_shadow_to_primary (issue #1495) — shared shadow->primary copy helper
+# ---------------------------------------------------------------------------
+
+class TestCopyShadowToPrimary:
+    def test_copies_coefficients_under_default_keys(self):
+        from src.model.emos_mode import copy_shadow_to_primary
+
+        db = _db()
+        shadow = {"a": 1.5, "b": 0.9, "c": 0.4, "d": 1.1,
+                   "crps_score": 1.23, "trained_at": "2026-10-31T00:00:00+00:00"}
+        copy_shadow_to_primary(db, "Chicago", shadow)
+
+        row = db.get_emos_coefficients("Chicago", "emos_primary")
+        assert row is not None
+        assert row["a"] == pytest.approx(1.5)
+        assert row["b"] == pytest.approx(0.9)
+        assert row["c"] == pytest.approx(0.4)
+        assert row["d"] == pytest.approx(1.1)
+        assert row["crps_score"] == pytest.approx(1.23)
+        assert row["trained_at"] == "2026-10-31T00:00:00+00:00"
+        # ready_for_promotion is always reset on the primary row -- it is a
+        # shadow-only flag, meaningless once copied.
+        assert row["ready_for_promotion"] == 0
+
+    def test_does_not_touch_effective_mode(self):
+        """Copying coefficients alone must never promote a city — the override
+        table is a separate, deliberate decision callers make themselves."""
+        from src.model.emos_mode import copy_shadow_to_primary
+
+        db = _db()
+        shadow = {"a": 0.0, "b": 1.0, "c": 0.5, "d": 1.0}
+        copy_shadow_to_primary(db, "Chicago", shadow)
+        assert db.get_emos_effective_mode("Chicago") is None
+
+    def test_respects_explicit_lead_hours_and_sources(self):
+        """A refresh at a specific lead/forecast/sigma key lands exactly there,
+        never touching the default (lead_hours=24, active-track) row."""
+        from src.model.emos_mode import copy_shadow_to_primary
+
+        db = _db()
+        shadow = {"a": 9.0, "b": 2.0, "c": 3.0, "d": 4.0}
+        copy_shadow_to_primary(
+            db, "Chicago", shadow,
+            lead_hours=6, forecast_source="baseline", sigma_source="fixed",
+        )
+        pinned = db.get_emos_coefficients(
+            "Chicago", "emos_primary",
+            forecast_source="baseline", sigma_source="fixed", lead_hours=6,
+        )
+        assert pinned is not None
+        assert pinned["a"] == pytest.approx(9.0)
+
+        default_row = db.get_emos_coefficients("Chicago", "emos_primary")
+        assert default_row is None
+
+    def test_overwrites_existing_primary_row_at_same_key(self):
+        from src.model.emos_mode import copy_shadow_to_primary
+
+        db = _db()
+        _upsert(db, "Chicago", "emos_primary", a=0.0, b=1.0, c=0.5, d=1.0)
+        copy_shadow_to_primary(db, "Chicago", {"a": 7.0, "b": 1.0, "c": 0.5, "d": 1.0})
+        row = db.get_emos_coefficients("Chicago", "emos_primary")
+        assert row["a"] == pytest.approx(7.0)
+
+
+# ---------------------------------------------------------------------------
+# Database.get_cities_with_effective_mode (issue #1495)
+# ---------------------------------------------------------------------------
+
+class TestGetCitiesWithEffectiveMode:
+    def test_returns_only_matching_cities(self):
+        db = _db()
+        db.set_emos_effective_mode("Chicago", "emos_primary")
+        db.set_emos_effective_mode("Miami", "emos_primary")
+        db.set_emos_effective_mode("Denver", "emos_shadow")
+        db.set_emos_effective_mode("Atlanta", "legacy")
+
+        promoted = db.get_cities_with_effective_mode("emos_primary")
+        assert sorted(promoted) == ["Chicago", "Miami"]
+
+    def test_empty_when_no_overrides(self):
+        db = _db()
+        assert db.get_cities_with_effective_mode("emos_primary") == []
+
+    def test_reflects_demotion(self):
+        db = _db()
+        db.set_emos_effective_mode("Chicago", "emos_primary")
+        db.set_emos_effective_mode("Chicago", "legacy")
+        assert db.get_cities_with_effective_mode("emos_primary") == []
