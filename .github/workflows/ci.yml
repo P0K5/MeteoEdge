@@ -75,6 +75,13 @@ jobs:
     - name: Install dependencies
       run: uv pip install -r requirements.txt --system
 
+    - name: Diagnose runner environment (#1498)
+      run: |
+        echo "nproc: $(nproc)"
+        python -c "import os; print('os.cpu_count():', os.cpu_count())"
+        free -m
+        python -m pytest --version
+
     - name: Run tests with coverage
       run: |
         python -m pytest src/tests -q -n auto --dist loadfile \
