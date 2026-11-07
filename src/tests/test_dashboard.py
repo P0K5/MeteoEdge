@@ -945,6 +945,66 @@ class TestStationsOverviewEndpoint:
         finally:
             dash_api._db = original
 
+    def test_excluded_station_has_excluded_status(self, client):
+        """A station in EXCLUDED_STATIONS must have status='excluded' (issue
+        #1500), distinct from 'disabled' even though both derive enabled=False
+        upstream in some configurations."""
+        from src.config import STATIONS
+        db = self._setup_db()
+        first_metar = STATIONS[0][0]
+        db.set_config("EXCLUDED_STATIONS", first_metar)
+        original = dash_api._db
+        try:
+            self._inject_db(db)
+            with patch("src.dashboard.api.DISABLED_STATIONS", set()):
+                resp = client.get("/api/stations/overview")
+            data = resp.json()
+            item = next(s for s in data if s["metar"] == first_metar)
+            assert item["status"] == "excluded"
+        finally:
+            dash_api.set_db(original)
+
+    def test_excluded_takes_priority_over_disabled(self, client):
+        """A station that is BOTH disabled and excluded reports 'excluded'
+        (issue #1500: exclusion is the stronger, more complete removal)."""
+        from src.config import STATIONS
+        db = self._setup_db()
+        first_metar = STATIONS[0][0]
+        db.set_config("EXCLUDED_STATIONS", first_metar)
+        original = dash_api._db
+        try:
+            self._inject_db(db)
+            with patch("src.dashboard.api.DISABLED_STATIONS", {first_metar}):
+                resp = client.get("/api/stations/overview")
+            data = resp.json()
+            item = next(s for s in data if s["metar"] == first_metar)
+            assert item["status"] == "excluded"
+        finally:
+            dash_api.set_db(original)
+
+    def test_empty_excluded_stations_does_not_exclude_anything(self, client):
+        """Default empty EXCLUDED_STATIONS leaves every station's status
+        unaffected (issue #1500 requirement: empty setting changes nothing)."""
+        from src.config import STATIONS
+        db = self._setup_db()
+        first_metar = STATIONS[0][0]
+        now_iso = datetime.now(timezone.utc).isoformat()
+        db.insert_observation(
+            ts=now_iso, station=first_metar, temp_f=75.0, temp_native=75.0,
+            unit="F", source="test",
+        )
+        original = dash_api._db
+        try:
+            self._inject_db(db)
+            with patch("src.dashboard.api.DISABLED_STATIONS", set()), \
+                    patch("src.dashboard.api.STATION_ACTIVE_HOURS", {first_metar: (0, 24)}):
+                resp = client.get("/api/stations/overview")
+            data = resp.json()
+            item = next(s for s in data if s["metar"] == first_metar)
+            assert item["status"] == "active"
+        finally:
+            dash_api.set_db(original)
+
     def test_station_outside_hours_status(self, client):
         """A station outside its active hours must have status='outside_hours'."""
         from src.config import STATIONS
@@ -2210,6 +2270,58 @@ class TestConfigEndpoint:
             resp = client.patch("/api/config", json={"key": "EMOS_SIGMA_SOURCE", "value": "ensemble"})
             # Should succeed (200 or similar) because it's a valid config key
             assert resp.status_code == 200
+        finally:
+            dash_api.set_db(original)
+
+    def test_patch_excluded_stations_valid_code(self, client):
+        """PATCH /api/config accepts a known METAR code for EXCLUDED_STATIONS
+        and normalises it (issue #1500)."""
+        db = self._setup_db()
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.patch("/api/config", json={"key": "EXCLUDED_STATIONS", "value": "wsss"})
+            assert resp.status_code == 200
+            assert db.get_config("EXCLUDED_STATIONS") == "WSSS"
+        finally:
+            dash_api.set_db(original)
+
+    def test_patch_excluded_stations_empty_clears(self, client):
+        """An empty value clears EXCLUDED_STATIONS (issue #1500)."""
+        db = self._setup_db()
+        db.set_config("EXCLUDED_STATIONS", "WSSS")
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.patch("/api/config", json={"key": "EXCLUDED_STATIONS", "value": ""})
+            assert resp.status_code == 200
+            assert db.get_config("EXCLUDED_STATIONS") == ""
+        finally:
+            dash_api.set_db(original)
+
+    def test_patch_excluded_stations_rejects_unknown_code(self, client):
+        """An unknown station code is rejected with a 4xx, not silently stored
+        (issue #1500 -- guards against a typo silently doing nothing)."""
+        db = self._setup_db()
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.patch("/api/config", json={"key": "EXCLUDED_STATIONS", "value": "ZZZZ"})
+            assert resp.status_code >= 400
+        finally:
+            dash_api.set_db(original)
+
+    def test_excluded_stations_in_stations_group(self, client):
+        """GET /api/config must surface EXCLUDED_STATIONS under the 'stations' group."""
+        db = self._setup_db()
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.get("/api/config")
+            data = resp.json()
+            assert "stations" in data
+            assert "EXCLUDED_STATIONS" in data["stations"]
+            assert data["stations"]["EXCLUDED_STATIONS"]["value"] == ""
         finally:
             dash_api.set_db(original)
 

@@ -1405,6 +1405,7 @@ Every block is visible in two places:
 | `DISABLED_STATIONS` | RKSI | codes | Alias for `SHADOW_STATIONS` — kept for backwards compatibility. Both env vars are equivalent. | No |
 | `SHADOW_STATIONS_YES` | (unset) | codes | Comma-separated stations where only the YES side is shadowed; NO side trades normally. | No |
 | `SHADOW_STATIONS_NO` | (unset) | codes | Comma-separated stations where only the NO side is shadowed; YES side trades normally. | No |
+| `EXCLUDED_STATIONS` | (empty) | codes | Issue #1500: comma-separated station codes removed from evaluation **entirely** — no candidates, no `scan_decisions` rows, no shadow or live trades, counted under skip reason `station_excluded`. Unlike `SHADOW_STATIONS`/`DISABLED_STATIONS` above (which still shadow-evaluate), this is a full exclusion. Live-config-backed (dashboard Config tab → Stations group); takes effect on the next poll, no restart. Also idles the Singapore-only MSS collector (`src/data/collectors/mss.py`) while `WSSS` is in this list, which silences its staleness CRITICAL noise too. | No |
 
 ### Operational & API
 

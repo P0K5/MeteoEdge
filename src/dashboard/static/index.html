@@ -39,6 +39,7 @@ html{-webkit-font-smoothing:antialiased;scroll-behavior:smooth}
   --no:#e06060;--no-bg:#2a1212;--no-dim:#3a1e1e;
   --warn:#e8a845;--warn-bg:#2a1f08;
   --edge:#b07fe8;--edge-bg:#1e1530;
+  --excluded:#8a93b8;--excluded-bg:#1f2330;
   --sh-sm:0 1px 3px #00000040;--sh-md:0 4px 16px #00000055;
 }
 [data-theme="light"]{
@@ -50,6 +51,7 @@ html{-webkit-font-smoothing:antialiased;scroll-behavior:smooth}
   --no:#b82020;--no-bg:#f8dada;--no-dim:#fef0f0;
   --warn:#8a5309;--warn-bg:#fef0d8;
   --edge:#6040b0;--edge-bg:#ece8f8;
+  --excluded:#565f82;--excluded-bg:#e4e7f2;
   --sh-sm:0 1px 3px #1820380a;--sh-md:0 4px 16px #1820380f;
 }
 
@@ -599,6 +601,10 @@ a,button,input,select{transition:color var(--transition),background var(--transi
   border-left-color:var(--muted);
   background:var(--surface-off);
 }
+.station-card.accent-excluded{
+  border-left-color:var(--excluded);
+  background:var(--surface-off);
+}
 
 .station-header{
   padding:var(--space-4) var(--space-5);
@@ -637,6 +643,8 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .badge-no_data .status-dot{background:var(--no);}
 .badge-disabled{background:var(--warn-bg);color:var(--warn);}
 .badge-disabled .status-dot{background:var(--warn);}
+.badge-excluded{background:var(--excluded-bg);color:var(--excluded);}
+.badge-excluded .status-dot{background:var(--excluded);}
 
 .station-stats{
   padding:0 var(--space-5) var(--space-3);
@@ -3009,7 +3017,7 @@ let edgeLoaded = false;
 let edgeSelectedStation = null;  // Currently selected station in edge tab
 let edgeAllStations = [];  // List of all stations
 
-const STATUS_ORDER = { active: 0, outside_hours: 1, no_data: 2, disabled: 3 };
+const STATUS_ORDER = { active: 0, outside_hours: 1, no_data: 2, disabled: 3, excluded: 4 };
 
 function statusBadgeHTML(status) {
   const labels = {
@@ -3017,6 +3025,7 @@ function statusBadgeHTML(status) {
     outside_hours: 'Outside hours',
     no_data: 'No data',
     disabled: 'Disabled',
+    excluded: 'Excluded',
   };
   const label = labels[status] || status;
   return `<span class="status-badge badge-${status}"><span class="status-dot"></span>${label}</span>`;
@@ -3203,8 +3212,14 @@ function renderStationCard(s) {
   const yesLive = s.yes_enabled !== false;
   const noLive  = s.no_enabled  !== false;
   let accentClass;
-  // Check for outside_hours status first (overrides live/shadow accent logic)
-  if (s.status === 'outside_hours') {
+  // Check for excluded/outside_hours status first (overrides live/shadow
+  // accent logic) -- an excluded station (issue #1500) may still carry
+  // yes_enabled/no_enabled=true from a stale DB override, so without this
+  // the card would show a misleading "live" accent while the badge says
+  // Excluded.
+  if (s.status === 'excluded') {
+    accentClass = ' accent-excluded';
+  } else if (s.status === 'outside_hours') {
     accentClass = ' accent-outside_hours';
   } else if (yesLive && noLive)        accentClass = ' accent-live-live';
   else if (yesLive && !noLive)  accentClass = ' accent-live-shadow';
@@ -4327,8 +4342,8 @@ function edgeEmosModeChipHTML(mode) {
 let configLoaded = false;
 let _configData = {};
 
-const _CFG_GROUP_LABELS = { strategy: 'Strategy', risk: 'Risk', position: 'Position Sizing', timing: 'Timing', forecast: 'Forecast', monitoring: 'Monitoring', promotion: 'Promotion' };
-const _CFG_GROUP_ICONS = { strategy: 'trending-up', risk: 'shield', position: 'layers', timing: 'clock', forecast: 'cloud', monitoring: 'activity', promotion: 'award' };
+const _CFG_GROUP_LABELS = { strategy: 'Strategy', risk: 'Risk', position: 'Position Sizing', timing: 'Timing', forecast: 'Forecast', monitoring: 'Monitoring', promotion: 'Promotion', stations: 'Stations' };
+const _CFG_GROUP_ICONS = { strategy: 'trending-up', risk: 'shield', position: 'layers', timing: 'clock', forecast: 'cloud', monitoring: 'activity', promotion: 'award', stations: 'map-pin' };
 
 function _renderConfigParam(key, param) {
   let ctrlHTML;
@@ -4360,7 +4375,7 @@ function _renderConfigGroups(data) {
   // response but not listed here is appended afterwards, so a newly-added
   // _CONFIG_META group (e.g. "monitoring", "promotion") can never again be
   // silently dropped from the Config tab just because it was omitted here.
-  const preferred = ['strategy', 'risk', 'position', 'timing', 'forecast', 'monitoring', 'promotion'];
+  const preferred = ['strategy', 'risk', 'position', 'timing', 'forecast', 'monitoring', 'promotion', 'stations'];
   const extras = Object.keys(data).filter(g => !preferred.includes(g));
   const order = [...preferred, ...extras];
   let html = '';

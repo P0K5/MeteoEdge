@@ -65,7 +65,7 @@ from src.config import (
     POSITION_SNAPSHOTS_JSONL, LOG_DIR, STARTING_CAPITAL_EUR,
     STATION_ACTIVE_HOURS, DISABLED_STATIONS, SHADOW_STATIONS_YES, SHADOW_STATIONS_NO,
     EMOS_DEFAULT_MODE, CONFIG_DEFAULTS, get_live_config, station_city,
-    MODEL_PROB_CAP, METAR_SKIP_STATIONS,
+    MODEL_PROB_CAP, METAR_SKIP_STATIONS, parse_station_list,
     COPY_TRADING_CAPITAL_USD, COPY_LIVE_CAPITAL_USD,
     live_exposure_drawdown_bound_error,
 )
@@ -420,7 +420,7 @@ class StationOverviewOut(BaseModel):
     last_trade_ts: str | None
     open_positions_count: int
     last_obs_ts: str | None
-    status: Literal["active", "outside_hours", "no_data", "disabled"]
+    status: Literal["active", "outside_hours", "no_data", "disabled", "excluded"]
 
 
 class PerfQuadrantOut(BaseModel):
@@ -2293,15 +2293,21 @@ def _derive_station_status(
     enabled: bool,
     last_obs_ts: "str | None",
     station_tz: str = "UTC",
+    excluded: bool = False,
 ) -> str:
     """Derive the station status string from config and latest observation timestamp.
 
     Logic:
+      - excluded  → station is in EXCLUDED_STATIONS (issue #1500) -- takes
+                    priority over disabled since an excluded station is
+                    removed from evaluation entirely, not merely not-live
       - disabled  → station is in DISABLED_STATIONS
       - outside_hours → enabled AND current local hour outside active_hours_local
       - no_data   → enabled AND in active hours AND (no obs or obs > 2h ago)
       - active    → enabled AND in active hours AND obs within 2h
     """
+    if excluded:
+        return "excluded"
     if not enabled:
         return "disabled"
 
@@ -2384,6 +2390,18 @@ def stations_overview() -> list[StationOverviewOut]:
         except Exception:
             logger.warning("[stations/overview] failed to fetch station_overrides", exc_info=True)
 
+    # Read EXCLUDED_STATIONS from live config at request time (issue #1500) --
+    # same "may change between restarts" rationale as DISABLED_STATIONS above,
+    # except this one is DB-backed (get_live_config), not env-only.
+    excluded_stations: "set[str]" = set()
+    if _db is not None:
+        try:
+            excluded_stations = parse_station_list(
+                get_live_config(_db).get("EXCLUDED_STATIONS", CONFIG_DEFAULTS["EXCLUDED_STATIONS"])
+            )
+        except Exception:
+            logger.warning("[stations/overview] failed to fetch EXCLUDED_STATIONS", exc_info=True)
+
     result: list[StationOverviewOut] = []
     for station_cfg in STATIONS:
         metar, lat, lon, city, _res_station, unit, tz = station_cfg
@@ -2401,7 +2419,9 @@ def stations_overview() -> list[StationOverviewOut]:
         open_positions_count = open_pos_map.get(metar, 0)
         stats = trade_stats_map.get(metar, {})
 
-        status = _derive_station_status(metar, enabled, last_obs_ts, tz)
+        status = _derive_station_status(
+            metar, enabled, last_obs_ts, tz, excluded=metar in excluded_stations
+        )
 
         active_hours = STATION_ACTIVE_HOURS.get(metar, (0, 24))
 
@@ -4390,6 +4410,11 @@ def copy_trading_activity_feed(
 # Config API — DB-backed parameter store
 # ---------------------------------------------------------------------------
 
+# Known METAR codes, used to validate EXCLUDED_STATIONS (issue #1500) entries
+# against a typo, not against whether the station is currently active --
+# STATIONS already includes archive/shadow-only candidates.
+_KNOWN_STATION_METARS = frozenset(s[0] for s in STATIONS)
+
 # Full parameter metadata: description, type, group, optional bounds.
 # Keys match CONFIG_DEFAULTS in src/config.py exactly.
 _CONFIG_META: dict[str, dict] = {
@@ -4781,6 +4806,11 @@ _CONFIG_META: dict[str, dict] = {
         "min": 0.01,
         "max": 1.0,
     },
+    "EXCLUDED_STATIONS": {
+        "description": "Comma-separated METAR codes to remove from evaluation entirely (issue #1500) — no candidates, no scan_decisions rows, no shadow or live trades. Unlike per-side station_overrides toggles, this is a full exclusion. Empty = no station excluded. Example: WSSS",
+        "type": "stationlist",
+        "group": "stations",
+    },
 }
 
 _EMOS_VALID_MODES = frozenset({"legacy", "emos_shadow", "emos_primary"})
@@ -4831,6 +4861,13 @@ def _validate_config_value(key: str, raw_value: Any) -> "tuple[str, str | None]"
             if hi is not None and coerced > hi:
                 return "", f"{key} must be <= {hi}, got {coerced}"
             return str(coerced), None
+
+        if param_type == "stationlist":
+            codes = parse_station_list(str(raw_value))
+            unknown = codes - _KNOWN_STATION_METARS
+            if unknown:
+                return "", f"{key} contains unknown station code(s): {sorted(unknown)}"
+            return ",".join(sorted(codes)), None
 
         if param_type == "isotime":
             text = str(raw_value).strip()

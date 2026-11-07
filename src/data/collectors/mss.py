@@ -33,6 +33,16 @@ to 1.0s). No override is added here to avoid modifying the shared client.
 
 All HTTP calls use fetch() from src.http_client — no new HTTP client.
 All DB writes use the Database instance — no raw sqlite3.
+
+Station exclusion (issue #1500): WSSS's supplementary feed here is the
+single biggest CRITICAL error class in bot.log once its preferred stations
+(S24/S108/S107) drop out of the data.gov.sg response. ``poll()`` re-checks
+the EXCLUDED_STATIONS live-config setting on every call (same pattern as
+every other live-config flag in src/strategy/scanner.py) and idles --
+no HTTP fetch, no staleness check -- while WSSS is excluded. Toggling the
+setting from the dashboard Config tab takes effect on the next poll with no
+restart, the same no-op-but-revivable shape as the retired amos collector
+(issue #740), except re-checked live rather than retired once.
 """
 
 import json
@@ -41,6 +51,7 @@ import os
 import time
 from datetime import datetime, timedelta, timezone
 
+from src.config import CONFIG_DEFAULTS, get_live_config, parse_station_list
 from src.data.db import Database
 from src.http_client import fetch
 
@@ -51,6 +62,12 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _MSS_URL = "https://api.data.gov.sg/v1/environment/air-temperature"
+
+# The MSS collector is Singapore-only (WSSS is the only station it serves).
+# Issue #1500: while WSSS is in EXCLUDED_STATIONS, poll() idles instead of
+# fetching -- this is what actually silences the CRITICAL staleness noise
+# the issue reports (25/day rising to 570+/day), not just the HTTP fetch.
+_STATION_METAR = "WSSS"
 
 # Station priority list: S24 (Changi Airport) preferred, S108 (Paya Lebar) and
 # S107 (East Coast Parkway) as fallbacks when airport sensors are unavailable.
@@ -82,16 +99,47 @@ class MssCollector:
         self._cadence_min = int(os.getenv("MSS_CADENCE_MINUTES", "1"))
         self._last_obs_ts: datetime | None = None  # UTC-aware datetime of last stored obs
         self._missing_stations: set[str] = set()  # stations already warned about
+        self._was_excluded = False  # tracks transition for log noise (issue #1500)
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
+    def _is_excluded(self) -> bool:
+        """True while WSSS is listed in the live EXCLUDED_STATIONS setting.
+
+        Re-reads live config on every call (issue #1500) so toggling the
+        dashboard Config tab setting takes effect on the very next poll --
+        no restart needed, same as every other live-config flag read in
+        src/strategy/scanner.py.
+        """
+        try:
+            live = get_live_config(self._db)
+        except Exception:
+            log.warning("[mss] could not read live config for EXCLUDED_STATIONS; assuming not excluded", exc_info=True)
+            return False
+        excluded = parse_station_list(live.get("EXCLUDED_STATIONS", CONFIG_DEFAULTS["EXCLUDED_STATIONS"]))
+        return _STATION_METAR in excluded
+
     def poll(self) -> bool:
         """Fetch the latest MSS observation and persist it.
 
         Returns True if a new observation was stored, False otherwise.
+
+        No-ops entirely (no HTTP fetch, no staleness check/CRITICAL) while
+        WSSS is excluded via EXCLUDED_STATIONS (issue #1500) -- this is the
+        actual fix for the CRITICAL log noise the issue reports, since that
+        noise comes from _check_staleness(), not from the fetch itself.
         """
+        if self._is_excluded():
+            if not self._was_excluded:
+                log.info("[mss] WSSS excluded via EXCLUDED_STATIONS -- idling (issue #1500)")
+                self._was_excluded = True
+            return False
+        if self._was_excluded:
+            log.info("[mss] WSSS no longer excluded -- resuming polling")
+            self._was_excluded = False
+
         reading = self._fetch_mss()
 
         if reading is None:

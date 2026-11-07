@@ -23,7 +23,7 @@ from src.config import (
     ENABLE_CLOB_ENRICHMENT, MIN_FORECAST_BRACKET_MARGIN_F, DISABLED_STATIONS,
     SHADOW_STATIONS, SHADOW_STATIONS_YES, SHADOW_STATIONS_NO,
     CONFIG_DEFAULTS, get_live_config, MODEL_PROB_CAP, FORECAST_STDDEV_F,
-    ENVELOPE_SIGMA_CLIMB_FRACTION,
+    ENVELOPE_SIGMA_CLIMB_FRACTION, parse_station_list,
 )
 from src.model.envelope import (
     Bracket, WeatherState, true_probability_yes, compute_envelope,
@@ -614,6 +614,13 @@ def scan_markets(
         # LOW-direction scan rollback (issue #733), default off -- resolved
         # once per scan, same pattern as NEXT_DAY_EVALUATION above.
         enable_low_markets = bool(_live.get("ENABLE_LOW_MARKETS", CONFIG_DEFAULTS["ENABLE_LOW_MARKETS"]))
+        # Station exclusion (issue #1500), default empty -- resolved once per
+        # scan, same live-config pattern as the flags above. Unlike
+        # SHADOW_STATIONS/DISABLED_STATIONS (which only suppress LIVE trading),
+        # an excluded station is skipped below before any evaluation.
+        excluded_stations = parse_station_list(
+            _live.get("EXCLUDED_STATIONS", CONFIG_DEFAULTS["EXCLUDED_STATIONS"])
+        )
     else:
         shadow_yes_edge_min  = float(CONFIG_DEFAULTS["SHADOW_MIN_EDGE_CENTS_YES"])
         shadow_yes_conf_min  = float(CONFIG_DEFAULTS["SHADOW_MIN_CONFIDENCE_YES"])
@@ -639,6 +646,9 @@ def scan_markets(
         enable_low_markets = os.getenv(
             "ENABLE_LOW_MARKETS", str(CONFIG_DEFAULTS["ENABLE_LOW_MARKETS"])
         ).strip().lower() == "true"
+        excluded_stations = parse_station_list(
+            os.getenv("EXCLUDED_STATIONS", str(CONFIG_DEFAULTS["EXCLUDED_STATIONS"]))
+        )
 
     # Next-day evaluation (issue #687): per-station eligibility + which future
     # date to treat as "next-day" for that station. Computed once per scan,
@@ -708,6 +718,13 @@ def scan_markets(
             is_temp, station = is_highest_temp_market(market)
             if not is_temp:
                 # Market is not a highest-temp market; don't even count it
+                continue
+            if station in excluded_stations:
+                # Issue #1500: station fully excluded from evaluation -- no
+                # candidates, no scan_decisions row, counted separately from
+                # every other skip reason so exclusions stay visible.
+                log.debug("[%s] -- SKIPPED %s: in EXCLUDED_STATIONS", station, "station_excluded")
+                skip_reason_counts["station_excluded"] += 1
                 continue
             if station not in weather:
                 # It's a highest-temp market but we have no weather data for this station
@@ -1238,6 +1255,11 @@ def scan_markets(
             try:
                 is_low, station = is_lowest_temp_market(market)
                 if not is_low:
+                    continue
+                if station in excluded_stations:
+                    # Issue #1500: same exclusion as the HIGH-direction loop above.
+                    log.debug("[%s] -- SKIPPED %s: in EXCLUDED_STATIONS", station, "station_excluded")
+                    skip_reason_counts["station_excluded"] += 1
                     continue
                 if station not in weather_low:
                     skip_reason_counts["low_no_state"] += 1
