@@ -326,3 +326,92 @@ class TestStaleness:
             collector._check_staleness()
 
         assert not any(r.levelname == "CRITICAL" for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Station exclusion (issue #1500)
+# ---------------------------------------------------------------------------
+
+class TestStationExclusion:
+    """While WSSS is in EXCLUDED_STATIONS, poll() must idle entirely: no HTTP
+    fetch and no staleness CRITICAL (the actual source of the log noise the
+    issue reports). Toggling the live-config setting takes effect on the
+    very next poll -- no restart.
+    """
+
+    def test_poll_does_not_fetch_while_excluded(self):
+        db = _db()
+        db.set_config("EXCLUDED_STATIONS", "WSSS")
+        collector = MssCollector(db)
+
+        with patch("src.data.collectors.mss.fetch") as mock_fetch:
+            result = collector.poll()
+
+        assert result is False
+        mock_fetch.assert_not_called()
+        rows = db.get_observations("Singapore", since="2000-01-01")
+        assert len(rows) == 0
+
+    def test_poll_suppresses_staleness_critical_while_excluded(self, caplog):
+        """The 570+/day CRITICAL noise the issue reports comes from
+        _check_staleness(), not the fetch -- it must not fire while excluded,
+        even with a very stale _last_obs_ts."""
+        db = _db()
+        db.set_config("EXCLUDED_STATIONS", "WSSS")
+        collector = MssCollector(db)
+        collector._last_obs_ts = datetime.now(timezone.utc) - timedelta(hours=5)
+
+        with patch("src.data.collectors.mss.fetch") as mock_fetch:
+            with caplog.at_level(logging.CRITICAL, logger="src.data.collectors.mss"):
+                collector.poll()
+
+        mock_fetch.assert_not_called()
+        assert not any(r.levelname == "CRITICAL" for r in caplog.records)
+
+    def test_empty_excluded_stations_changes_nothing(self):
+        """Default empty EXCLUDED_STATIONS: poll() behaves exactly as before."""
+        db = _db()
+        db.set_config("EXCLUDED_STATIONS", "")
+        collector = MssCollector(db)
+
+        with patch("src.data.collectors.mss.fetch", return_value=_make_response(200, _mss_response())):
+            result = collector.poll()
+
+        assert result is True
+        rows = db.get_observations("Singapore", since="2000-01-01")
+        assert len(rows) == 1
+
+    def test_resumes_polling_when_un_excluded_without_restart(self):
+        """Toggling EXCLUDED_STATIONS off between two poll() calls on the same
+        long-lived collector resumes fetching on the very next call -- no
+        process restart, no new MssCollector instance, required."""
+        db = _db()
+        db.set_config("EXCLUDED_STATIONS", "WSSS")
+        collector = MssCollector(db)
+
+        with patch("src.data.collectors.mss.fetch") as mock_fetch:
+            result = collector.poll()
+        assert result is False
+        mock_fetch.assert_not_called()
+
+        db.set_config("EXCLUDED_STATIONS", "")
+        with patch("src.data.collectors.mss.fetch", return_value=_make_response(200, _mss_response())) as mock_fetch:
+            result = collector.poll()
+
+        assert result is True
+        mock_fetch.assert_called_once()
+        rows = db.get_observations("Singapore", since="2000-01-01")
+        assert len(rows) == 1
+
+    def test_other_station_in_excluded_stations_does_not_idle_mss(self):
+        """EXCLUDED_STATIONS containing an unrelated station must not idle
+        the Singapore-only MSS collector."""
+        db = _db()
+        db.set_config("EXCLUDED_STATIONS", "KORD")
+        collector = MssCollector(db)
+
+        with patch("src.data.collectors.mss.fetch", return_value=_make_response(200, _mss_response())) as mock_fetch:
+            result = collector.poll()
+
+        assert result is True
+        mock_fetch.assert_called_once()
