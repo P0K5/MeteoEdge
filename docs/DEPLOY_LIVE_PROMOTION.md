@@ -1,5 +1,15 @@
 # Deploying per-wallet live copy-trading promotion
 
+> **DISCONTINUED (2026-11, issue #1502).** The copy-trading program was wound
+> down (#1501: services stopped/disabled; #1502: all application code
+> described in this runbook removed -- `copy_signal_loop.py`,
+> `copy_live_readiness.py`, `copy_wallet_promotion.py`,
+> `halt_live_copy_trading.py`, the `meteoedge-copy-*` systemd units, and the
+> `/api/copy-trading/*` endpoints no longer exist). Kept for historical
+> reference only; do not follow these steps. The underlying `copy_*` database
+> tables and their historical data are deliberately retained -- see
+> `docs/DB_SCHEMA.md`.
+
 End-to-end runbook for shipping the per-wallet live promotion epic and taking a
 single wallet live, while every other followed wallet keeps paper-trading.
 

@@ -1,5 +1,11 @@
 # Copy-Trading Strategy — Architecture & Requirements
 
+> **DISCONTINUED (2026-11, issue #1502).** The copy-trading program was wound
+> down (#1501: services stopped/disabled; #1502: all application code
+> described here removed). Kept for historical/design-rationale reference
+> only. The `copy_*` database tables and their historical data are
+> deliberately retained -- see `docs/DB_SCHEMA.md`.
+
 Status: draft, informed by spike #1097 / PR #1098. Not yet broken into
 leaf implementation issues — see "Epics" below for the issue-level
 breakdown and `docs/design/copy-trading-dashboard.md` for the frontend spec.

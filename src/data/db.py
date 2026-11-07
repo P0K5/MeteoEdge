@@ -31,15 +31,17 @@ _DEFAULT_PATH = os.getenv("DB_PATH", "data/meteoedge.db")
 _DEB_WEIGHT_LOG_PURGE_CUTOFF = "2026-06-30"
 
 # Issue #1232: sqlite3's default busy timeout is 5s, which is thin for a
-# ~440MB WAL-mode database with seven concurrent writer processes
-# (meteoedge, meteoedge-copy-signals, meteoedge-copy-settle,
-# meteoedge-copy-live-settle, meteoedge-copy-health, meteoedge-copy-screening,
-# cryptoedge). WAL keeps readers from blocking writers, but writer-vs-writer
-# access still serialises -- any writer holding the lock past 5s causes every
-# other writer to raise "database is locked" instead of waiting. The
-# 2026-09-27 copy-screening run hit exactly this and died after 8h11m having
-# completed only 30/50 wallets. 30s gives a large margin over an ordinary WAL
-# checkpoint without masking a genuinely stuck writer for too long.
+# ~440MB WAL-mode database with several concurrent writer processes
+# (meteoedge, cryptoedge, and -- until the 2026-11 wind-down, issue #1502 --
+# five more copy-trading writers). WAL keeps readers from blocking writers,
+# but writer-vs-writer access still serialises -- any writer holding the lock
+# past 5s causes every other writer to raise "database is locked" instead of
+# waiting. The 2026-09-27 copy-screening run hit exactly this and died after
+# 8h11m having completed only 30/50 wallets (the writer count has since
+# dropped with copy-trading's removal, but the margin stays: 30s is cheap
+# insurance against any future writer, not a copy-trading-specific tuning).
+# 30s gives a large margin over an ordinary WAL checkpoint without masking a
+# genuinely stuck writer for too long.
 _BUSY_TIMEOUT_SECONDS = 30
 
 def connect_with_busy_timeout(

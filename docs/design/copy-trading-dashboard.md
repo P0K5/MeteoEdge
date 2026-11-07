@@ -1,5 +1,10 @@
 # Design Spec — Copy-Trading Dashboard Tab
 
+> **DISCONTINUED (2026-11, issue #1502).** The copy-trading program was wound
+> down (#1501: services stopped/disabled; #1502: the Copy-Trading dashboard
+> tab and all code described here removed). Kept for historical/design-
+> rationale reference only.
+
 Companion to `docs/design/copy-trading-architecture.md` (Epic F). Extends
 the existing dashboard (`src/dashboard/api.py` + `src/dashboard/static/index.html`)
 with a new tab — same stack, no new framework: vanilla JS/HTML/CSS,

@@ -1,5 +1,10 @@
 # Design Spec — Copy-Trading Live/Paper Dashboard Views (Epic J)
 
+> **DISCONTINUED (2026-11, issue #1502).** The copy-trading program was wound
+> down (#1501: services stopped/disabled; #1502: the Copy-Trading dashboard
+> tab and all code described here removed). Kept for historical/design-
+> rationale reference only.
+
 **Updated 2026-10-05** for issues #1264 and #1266 (epic #1304, live-safety
 follow-ups from the 2026-10-04 incident on wallet `0x924379a7` — live
 trading ran 4/4 losing trades and is now halted). Both updates are to

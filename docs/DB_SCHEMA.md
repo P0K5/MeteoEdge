@@ -615,6 +615,22 @@ pattern as the `trades.mode` migration above).
 
 ---
 
+> **The five `copy_*` tables below describe a discontinued feature (2026-11,
+> issue #1502).** The copy-trading program was wound down (#1501: services
+> stopped/disabled; #1502: all application code that reads/writes these
+> tables removed -- `copy_wallet_screening.py`, `copy_wallet_health.py`,
+> `copy_wallet_promotion.py`, `copy_backtest_comparison.py`, the
+> `/api/copy-trading/*` endpoints, and every other writer/reader named below
+> no longer exist in the codebase). **The tables and their historical data
+> are deliberately kept** (explicit operator decision) -- this schema
+> documentation is kept too, for historical/forensic reference, even though
+> every writer and reader it names is gone. The one exception:
+> `copy_live_positions` is still read by one surviving method,
+> `Database.get_copy_live_positions()`, used by the weather bot's own
+> `/api/portfolio` endpoint to avoid double-counting a settled copy-trading
+> fill on the shared deposit wallet as a weather trade -- see the comment on
+> that method in `src/data/db.py`.
+
 ### copy_wallet_candidates
 
 **Purpose:** One row per wallet per screening run — the copy-trading wallet screening history (epic #1099, story 1 issue #1108). Holds the copier's post-slippage stats for each candidate wallet so the stability check can compare a wallet's latest run against its previous one.
