@@ -1,11 +1,9 @@
 """Unit tests for the dashboard's tab bar scroll containment (issue #1201).
 
 Tests verify:
-1. Copy-Trading tab's <main> element has both 'main' and 'main--wide' classes
-   (desktop table widening fix).
-2. .tab-bar CSS block contains overflow-x:auto and flex-wrap:nowrap
+1. .tab-bar CSS block contains overflow-x:auto and flex-wrap:nowrap
    (mobile scroll containment fix).
-3. switchTab() function calls scrollIntoView() on activated buttons
+2. switchTab() function calls scrollIntoView() on activated buttons
    (auto-scroll-to-view behavior).
 """
 from __future__ import annotations
@@ -22,27 +20,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 INDEX_HTML = REPO_ROOT / "src" / "dashboard" / "static" / "index.html"
 
 NODE = shutil.which("node")
-
-
-@pytest.mark.parametrize("tab", ["copy-wallets", "copy-paper", "copy-live"])
-def test_copy_trading_tab_main_has_wide_modifier(tab):
-    """Verify each Copy-Trading tab's <main> element has both 'main' and 'main--wide' classes.
-
-    This is the desktop table-widening fix: the Copy-Trading tabs can use
-    max-width: 1280px instead of 980px to fit wider tables without clipping.
-    """
-    html = INDEX_HTML.read_text(encoding="utf-8")
-
-    # The <main> must be the section's own first element (no lazy match
-    # running on into a later section).
-    match = re.search(
-        rf'<section id="tab-{tab}"[^>]*>\s*<main class="main main--wide">',
-        html,
-    )
-    assert match, (
-        f"Copy-Trading tab's <main> element must have both 'main' and 'main--wide' classes. "
-        f"Expected: <main class=\"main main--wide\"> directly within <section id=\"tab-{tab}\">"
-    )
 
 
 def test_tab_bar_has_overflow_x_auto():
@@ -195,7 +172,7 @@ def test_switchTab_scrollIntoView_behavior(tmp_path):
           document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
           document.querySelectorAll('.tab-panel').forEach(panel => panel.classList.remove('active'));
 
-          switchTab('copy-paper');
+          switchTab('portfolio');
           assert.ok(scrollIntoViewCalled, 'switchTab() must call scrollIntoView on the activated button');
           assert.deepStrictEqual(scrollIntoViewOptions,
             {behavior:'smooth', inline:'nearest', block:'nearest'},

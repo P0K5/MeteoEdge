@@ -1,5 +1,5 @@
-"""Purge old rows from candidates, guardrail_events, and copy_signals tables
-to control DB size.
+"""Purge old rows from candidates and guardrail_events tables to control DB
+size.
 
 Idempotent daily job that deletes rows older than the configured retention
 windows from the live trading database (data/meteoedge.db).
@@ -8,7 +8,7 @@ Usage::
 
     python -m src.scripts.purge_retention
     python -m src.scripts.purge_retention --dry-run
-    python -m src.scripts.purge_retention --candidates-days 90 --guardrail-days 60 --copy-signals-days 30
+    python -m src.scripts.purge_retention --candidates-days 90 --guardrail-days 60
 """
 from __future__ import annotations
 
@@ -28,12 +28,6 @@ log = logging.getLogger(__name__)
 _DEFAULT_DB_PATH = os.getenv("DB_PATH", "data/meteoedge.db")
 _DEFAULT_CANDIDATES_DAYS = int(os.getenv("CANDIDATES_RETAIN_DAYS", "90"))
 _DEFAULT_GUARDRAIL_DAYS = int(os.getenv("GUARDRAIL_RETAIN_DAYS", "60"))
-# Issue #1339: copy_signals is append-only and has no other retention bound
-# (unlike candidates/guardrail_events, which were already covered here) --
-# growing ~120 rows/hour, it was the root cause of the Activity Feed
-# endpoint's unbounded full-table query. 30 days matches this job's
-# existing guardrail_events default.
-_DEFAULT_COPY_SIGNALS_DAYS = int(os.getenv("COPY_SIGNALS_RETAIN_DAYS", "30"))
 
 # Issue #1238: meteoedge-purge-retention.timer runs daily at 01:00 UTC
 # (02:00 local during DST) -- squarely inside the 01:00-03:00 local window
@@ -81,17 +75,13 @@ def _purge_table_chunked(
 
     Args:
         conn: SQLite connection to meteoedge.db.
-        table: Table name (``"candidates"``, ``"guardrail_events"``, or
-            ``"copy_signals"``) -- trusted, not user input; never built
-            from external data.
+        table: Table name (``"candidates"`` or ``"guardrail_events"``) --
+            trusted, not user input; never built from external data.
         days: Retention window in days.
         dry_run: If True, count rows but do not delete.
         ts_column: Name of the table's timestamp column to filter on.
-            Defaults to ``"ts"`` (candidates/guardrail_events); issue #1339
-            added ``copy_signals``, which has no ``ts`` column -- its
-            timestamp column is ``detected_at`` -- so this is now a
-            parameter rather than hardcoded. Trusted, not user input, same
-            as *table*.
+            Defaults to ``"ts"`` (candidates/guardrail_events). Trusted,
+            not user input, same as *table*.
 
     Returns:
         Number of rows deleted (or that would be deleted if dry_run=True).
@@ -159,49 +149,23 @@ def purge_guardrail_events(
     return _purge_table_chunked(conn, "guardrail_events", days, dry_run)
 
 
-def purge_copy_signals(
-    conn: sqlite3.Connection,
-    days: int,
-    dry_run: bool = False,
-) -> int:
-    """Delete copy_signals rows older than *days* days. Returns count deleted.
-
-    Issue #1339: copy_signals is append-only, with no prior retention
-    policy, growing ~120 rows/hour -- same chunked-delete shape as
-    purge_candidates/purge_guardrail_events, but cutting on ``detected_at``
-    (this table's own timestamp column; it has no ``ts`` column).
-
-    Args:
-        conn: SQLite connection to meteoedge.db.
-        days: Retention window in days.
-        dry_run: If True, count rows but do not delete.
-
-    Returns:
-        Number of rows deleted (or that would be deleted if dry_run=True).
-    """
-    return _purge_table_chunked(conn, "copy_signals", days, dry_run, ts_column="detected_at")
-
-
 def run(
     db_path: str | Path | None = None,
     candidates_days: int | None = None,
     guardrail_days: int | None = None,
-    copy_signals_days: int | None = None,
     dry_run: bool = False,
 ) -> None:
-    """Execute purge for all three tables.
+    """Execute purge for both tables.
 
     Args:
         db_path: Path to meteoedge.db. Defaults to DB_PATH env var.
         candidates_days: Retention window for candidates. Defaults to CANDIDATES_RETAIN_DAYS env var or 90.
         guardrail_days: Retention window for guardrail_events. Defaults to GUARDRAIL_RETAIN_DAYS env var or 60.
-        copy_signals_days: Retention window for copy_signals (issue #1339). Defaults to COPY_SIGNALS_RETAIN_DAYS env var or 30.
         dry_run: If True, count rows but do not delete.
     """
     db_path = db_path or _DEFAULT_DB_PATH
     candidates_days = candidates_days if candidates_days is not None else _DEFAULT_CANDIDATES_DAYS
     guardrail_days = guardrail_days if guardrail_days is not None else _DEFAULT_GUARDRAIL_DAYS
-    copy_signals_days = copy_signals_days if copy_signals_days is not None else _DEFAULT_COPY_SIGNALS_DAYS
 
     db_path = Path(db_path).resolve()
     if not db_path.exists():
@@ -212,7 +176,6 @@ def run(
     try:
         cand_deleted = purge_candidates(conn, candidates_days, dry_run)
         guard_deleted = purge_guardrail_events(conn, guardrail_days, dry_run)
-        signals_deleted = purge_copy_signals(conn, copy_signals_days, dry_run)
     finally:
         conn.close()
 
@@ -220,8 +183,7 @@ def run(
     log.info(
         f"[purge_retention]{dry_tag} "
         f"candidates: retention={candidates_days}d, deleted={cand_deleted} | "
-        f"guardrail_events: retention={guardrail_days}d, deleted={guard_deleted} | "
-        f"copy_signals: retention={copy_signals_days}d, deleted={signals_deleted}"
+        f"guardrail_events: retention={guardrail_days}d, deleted={guard_deleted}"
     )
 
 
@@ -250,13 +212,6 @@ def main(argv: list[str] | None = None) -> None:
         help=f"Retention window for guardrail_events in days (default: {_DEFAULT_GUARDRAIL_DAYS}).",
     )
     parser.add_argument(
-        "--copy-signals-days",
-        type=int,
-        default=_DEFAULT_COPY_SIGNALS_DAYS,
-        metavar="N",
-        help=f"Retention window for copy_signals in days (default: {_DEFAULT_COPY_SIGNALS_DAYS}).",
-    )
-    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Count rows only; do not delete.",
@@ -274,7 +229,6 @@ def main(argv: list[str] | None = None) -> None:
         db_path=args.db_path,
         candidates_days=args.candidates_days,
         guardrail_days=args.guardrail_days,
-        copy_signals_days=args.copy_signals_days,
         dry_run=args.dry_run,
     )
 

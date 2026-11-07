@@ -280,63 +280,6 @@ RISK_MAX_OPEN_POSITIONS = int(os.getenv("RISK_MAX_OPEN_POSITIONS", "15"))
 RISK_DRAWDOWN_STOP_PCT = float(os.getenv("RISK_DRAWDOWN_STOP_PCT", "0.15"))
 RISK_MIN_LIQUIDITY = int(os.getenv("RISK_MIN_LIQUIDITY", "50"))
 
-# Copy-trading's own capital pool (issue #1115 / epic #1100). Deliberately NOT
-# derived from or read from STARTING_CAPITAL_EUR -- copy-trading and the
-# weather strategy are isolated capital pools by design (see the "Isolation"
-# section of docs/design/copy-trading-architecture.md and the #1100 comment
-# on separate tables). Not live-editable via the dashboard, for the same
-# reason STARTING_CAPITAL_EUR itself isn't (see CONFIG_DEFAULTS comment below).
-COPY_TRADING_CAPITAL_USD = float(os.getenv("COPY_TRADING_CAPITAL_USD", "100.0"))
-
-# Live copy-trading's own capital pool (issue #1163 / epic G #1158). Mirrors
-# COPY_TRADING_CAPITAL_USD's isolation exactly one layer up: never derived
-# from or read from COPY_TRADING_CAPITAL_USD (or STARTING_CAPITAL_EUR) --
-# live and paper copy-trading are separate capital pools by design, same as
-# paper is from the weather strategy. Not live-editable via the dashboard,
-# for the same reason. Defaults to 0.0, NOT 100.0 like the paper constant --
-# an operator who hasn't explicitly set real capital via the env var gets an
-# inert value, not an accidental live allocation. This is a safety default,
-# not a recommendation for the real value (an operator decision made at
-# deploy time). Built ahead of the phase-7 go/no-go gate (see
-# docs/design/copy-trading-architecture.md); nothing reads this at decision
-# time yet -- that's epic H's (#1159) job.
-COPY_LIVE_CAPITAL_USD = float(os.getenv("COPY_LIVE_CAPITAL_USD", "0.0"))
-
-
-def live_exposure_drawdown_bound_error(
-    max_total_exposure_usd: float, capital_usd: float, drawdown_stop_pct: float
-) -> "str | None":
-    """Return an error message if the live exposure cap outruns the drawdown stop.
-
-    Issue #1310 invariant: ``COPY_LIVE_MAX_TOTAL_EXPOSURE_USD <=
-    COPY_LIVE_CAPITAL_USD * COPY_LIVE_DRAWDOWN_STOP_PCT``. The live drawdown
-    breaker only sees *settled* P&L, so the worst case "every open unsettled
-    position is a total loss" must land at (never past) the stop threshold.
-    Shared by ``live_startup_sanity_check`` and the dashboard config write
-    path so the two can never drift. Pure function (no module state).
-    """
-    bound = capital_usd * drawdown_stop_pct
-    # Tiny epsilon so exact-boundary values survive float rounding.
-    if max_total_exposure_usd > bound + 1e-9:
-        return (
-            f"COPY_LIVE_MAX_TOTAL_EXPOSURE_USD (${max_total_exposure_usd:.2f}) exceeds "
-            f"COPY_LIVE_CAPITAL_USD (${capital_usd:.2f}) x "
-            f"COPY_LIVE_DRAWDOWN_STOP_PCT ({drawdown_stop_pct:g}) = ${bound:.2f}: "
-            "the drawdown breaker only sees settled P&L, so unsettled live "
-            "exposure must not exceed the stop threshold "
-            "(COPY_LIVE_MAX_TOTAL_EXPOSURE_USD <= COPY_LIVE_CAPITAL_USD x "
-            "COPY_LIVE_DRAWDOWN_STOP_PCT)."
-        )
-    return None
-
-# Copy-signal poll loop cadence (issue #1123). Unlike Epic A's screening
-# cadence (a systemd oneshot, not live-editable), src/scripts/copy_signal_loop.py
-# is a genuine persistent process like run.py -- POLL_INTERVAL_SECONDS is its
-# module-constant fallback (read once at import time); the live-editable
-# CONFIG_DEFAULTS entry below is what the loop actually re-reads every cycle
-# via get_live_config(db), so an operator can retune cadence mid-run.
-COPY_SIGNAL_POLL_INTERVAL_SECONDS = int(os.getenv("COPY_SIGNAL_POLL_INTERVAL_SECONDS", "300"))
-
 # Issue #611: intentional bracket re-entry must be an explicit config decision.
 # false (default): once ANY live order exists today for (station, ticker, side, day)
 #   -- filled, sold, or timeout attempt -- the entry gate in run.py blocks every
@@ -798,108 +741,6 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     # estimate, not a fitted value -- only applies to the fully-unfitted case;
     # a matched calibration bin's own sigma is used unchanged.
     "NEXT_DAY_SIGMA_MULTIPLIER": 1.5,
-    # Copy-trading config (issue #1115 / epic #1100). Isolated from the weather
-    # strategy: dedicated kill switch, dedicated exposure limits. Capital
-    # allocation (COPY_TRADING_CAPITAL_USD) deliberately lives OUTSIDE this
-    # dict as a plain module constant -- see the comment above STARTING_CAPITAL_EUR.
-    # Amounts are in USD (`_USD` suffix), not EUR: Polymarket settles in USDC
-    # and this is a separate capital pool from the weather strategy's EUR one.
-    "COPY_TRADING_ENABLED": False,
-    "COPY_DEFAULT_FLAT_STAKE_USD": 5.0,
-    "COPY_MAX_WALLETS_FOLLOWED": 10,
-    "COPY_MAX_EXPOSURE_PER_WALLET_USD": 50.0,
-    "COPY_MAX_TOTAL_EXPOSURE_USD": 250.0,
-    "COPY_SIGNAL_POLL_INTERVAL_SECONDS": 300,
-    # Renamed from COPY_ONE_POSITION_PER_MARKET (issue #1316): the old name
-    # said "per market" but the gate it drives in copy_signal_loop.py has
-    # always been per (wallet, market, outcome) -- an open position on
-    # outcome 0 never blocked a new one on outcome 1 of the same market.
-    # That mismatch between name and behaviour is how #1316's 185
-    # guaranteed-loss both-sides pairs went unnoticed; the actual
-    # market-level guard (refusing a guaranteed-loss opposite-side entry)
-    # is now unconditional in copy_signal_loop.py, not gated by this flag.
-    # seed_config() below migrates any already-persisted value under the
-    # old key so an operator override survives the rename unchanged.
-    "COPY_ONE_POSITION_PER_MARKET_OUTCOME": True,
-    "COPY_MIN_ENTRY_PRICE": 0.10,
-    # Realized-P&L circuit breaker (issue #1139, epic D #1138). Distinct from
-    # the open-EXPOSURE caps above -- those bound how much capital can be at
-    # risk at once, these stop new signal execution once copy-trading is
-    # actually LOSING money. Mirrors src/risk/manager.py's RiskManager
-    # daily-loss/drawdown pattern (see src/risk/copy_risk_manager.py), but
-    # DB-backed via Database.get_copy_realized_pnl_total[_for_date] rather
-    # than in-memory, so it survives copy_signal_loop.py restarts. Both are
-    # scoped to COPY_TRADING_CAPITAL_USD, never STARTING_CAPITAL_EUR -- same
-    # capital-pool isolation as everything else in this section. Gates new
-    # signal execution ONLY; never blocks copy_settle.py from settling an
-    # already-open position.
-    "COPY_DAILY_LOSS_LIMIT_USD": 25.0,
-    "COPY_DRAWDOWN_STOP_PCT": 0.20,
-    # Wallet-health auto-pause sample-size floor (issue #1225,
-    # src/scripts/copy_wallet_health.py::_realized_pnl_pause_reason). Counts
-    # DEDUPED decisions -- distinct (market, outcome_index) per wallet, not
-    # raw settled copy_positions rows, since one signal split across several
-    # fills must count once (issue #1207's dedupe fix, applied here too).
-    # 30 matches the live-trading go/no-go gate's own minimum-decisions
-    # threshold (docs/design/copy-trading-architecture.md) -- a rule that
-    # fires below that sample size would auto-pause wallets before they can
-    # ever reach the gate. Paper-only today (reads copy_positions, not
-    # copy_live_positions); live will need its own, deliberately tighter
-    # threshold when epic H (#1159) builds a live path -- do not reuse this
-    # key for that.
-    "COPY_HEALTH_MIN_DECISIONS_FOR_ROI_CHECK": 30,
-    # Screening-side sample-size floor (issue #1248,
-    # src/scripts/copy_wallet_screening.py::check_quality). Distinct from
-    # --min-trades (run()'s CLI arg, default 0, unset in production): that
-    # skips a wallet BEFORE persisting anything, so a rejection there leaves
-    # no auditable record; this is a quality-gate condition, so the row is
-    # still written to copy_wallet_candidates with eligible_to_follow=0 and
-    # a logged insufficient_resolved_trades reason, like every other quality
-    # condition. Chosen so it excludes noise (0x365f951dc2's n_resolved=2,
-    # median_roi=+2.79 -- a coin flip landing heads twice, the sole
-    # recommendation in the 2026-09-29 advisory report) without excluding
-    # any wallet this project has actually followed (observed n_resolved:
-    # 307, 411, 1357, 477) -- see issue #1248 for the measured evidence.
-    "COPY_SCREEN_MIN_RESOLVED_TRADES": 100,
-    # Live copy-trading config (issue #1163 / epic G #1158). Mirrors the
-    # paper COPY_* block immediately above exactly one layer up: isolated
-    # from PAPER copy-trading, not just from the weather strategy --
-    # dedicated live kill switch, dedicated live exposure limits. Capital
-    # allocation (COPY_LIVE_CAPITAL_USD) deliberately lives OUTSIDE this
-    # dict as a plain module constant, same as COPY_TRADING_CAPITAL_USD --
-    # see the comment above it. Built ahead of the phase-7 go/no-go gate
-    # (docs/design/copy-trading-architecture.md); COPY_LIVE_TRADING_ENABLED
-    # defaults False and nothing reads it at decision time yet -- that's
-    # epic H's (#1159) job. Flipping COPY_LIVE_TRADING_ENABLED or
-    # COPY_TRADING_ENABLED must never affect the other.
-    "COPY_LIVE_TRADING_ENABLED": False,
-    "COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD": 50.0,
-    "COPY_LIVE_MAX_TOTAL_EXPOSURE_USD": 250.0,
-    # Live-specific realized-P&L circuit breaker (issue #1175, epic I
-    # #1160). Mirrors COPY_DAILY_LOSS_LIMIT_USD/COPY_DRAWDOWN_STOP_PCT
-    # exactly one layer up, same isolation as the rest of this live block:
-    # even when paper's own breaker (issue #1139) hasn't tripped, live's
-    # own realized P&L (real fills, real slippage) could independently
-    # blow through a daily-loss or drawdown limit paper never sees, since
-    # it is derived from copy_live_positions, never copy_positions. Scoped
-    # to COPY_LIVE_CAPITAL_USD, never COPY_TRADING_CAPITAL_USD -- see
-    # src/risk/copy_risk_manager.py::allow_live_copy_signal.
-    "COPY_LIVE_DAILY_LOSS_LIMIT_USD": 25.0,
-    "COPY_LIVE_DRAWDOWN_STOP_PCT": 0.20,
-    # ISO-8601 UTC. Empty = all-time (drawdown counts every live loss). Set to a
-    # later timestamp to close earlier losses as a closed phase (issue #1317).
-    "COPY_LIVE_DRAWDOWN_SINCE": "",
-    # Wallet-balance reconciliation tolerance (issue #1174). copy_live_settle.py
-    # compares LiveTrader.get_usdc_balance() (the real exchange balance)
-    # against an expected balance derived from copy_live_positions
-    # bookkeeping (COPY_LIVE_CAPITAL_USD - currently-committed fills +
-    # realized settled P&L). Small, expected drift (CLOB fees, sub-cent
-    # rounding on size = round(size_usdc/price, 2)) should never page an
-    # operator -- only a drift LARGER than this tolerance does, via
-    # log.critical. $2 default is a starting guess for the small stakes
-    # this epic runs at ahead of the phase-7 go/no-go gate; not derived
-    # from any measured fee schedule -- revisit once real fills exist.
-    "COPY_LIVE_BALANCE_DRIFT_TOLERANCE_USD": 2.0,
     # Station exclusion (issue #1500): comma-separated METAR codes to remove
     # from evaluation entirely -- unlike SHADOW_STATIONS/DISABLED_STATIONS
     # (which only suppress LIVE trading, leaving shadow evaluation running),
@@ -968,9 +809,11 @@ MODEL_STATE_ATTRS: dict[str, str] = {
 # default. Append here, never remove -- a long-lived production DB may
 # still carry the old key for a long time after the rename ships.
 _RENAMED_CONFIG_KEYS: "dict[str, str]" = {
-    # issue #1316: the old name claimed market-level dedup scope the flag
-    # never actually had (always per (wallet, market, outcome)).
-    "COPY_ONE_POSITION_PER_MARKET": "COPY_ONE_POSITION_PER_MARKET_OUTCOME",
+    # issue #1502: the only entry here (issue #1316's copy-trading rename)
+    # was removed 2026-11 along with the rest of copy-trading's CONFIG_DEFAULTS
+    # keys -- seed_config() below only consults this dict for keys still in
+    # CONFIG_DEFAULTS, so a dead entry for a now-gone key would never fire.
+    # Add future renames here as usual.
 }
 
 

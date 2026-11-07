@@ -18,7 +18,7 @@ Covers #1457's acceptance criteria for the frontend half:
   are appended, sorted back into newest-first order.
 - A merge re-render preserves the current page (uses _renderClosedPage(),
   never resets to page 0 via renderClosed()) and flags freshly-merged rows
-  with the existing .copy-row-highlight treatment.
+  with the existing .row-highlight treatment.
 """
 from __future__ import annotations
 
@@ -150,7 +150,7 @@ _ASSERTIONS = textwrap.dedent("""
       // (unpopulated) stub element.
       const manualCardMatch = el.innerHTML.match(/<div class="([^"]*)" id="closed-card-tok-manual">/);
       assert.ok(manualCardMatch, 'card markup for tok-manual not found');
-      assert.ok(manualCardMatch[1].includes('copy-row-highlight'),
+      assert.ok(manualCardMatch[1].includes('row-highlight'),
         'a freshly-merged row must get the existing highlight treatment');
       // Newest-first: tok-manual (10-09) must precede tok-a (10-05) in the DOM.
       assert.ok(el.innerHTML.indexOf('tok-manual') < el.innerHTML.indexOf('tok-a'),
