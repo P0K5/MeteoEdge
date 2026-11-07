@@ -876,6 +876,186 @@ class TestStationExclusion:
 
 
 # ---------------------------------------------------------------------------
+# Earliest same-day entry hour (issue #1506)
+# ---------------------------------------------------------------------------
+
+class TestEarliestEntryLocalHour:
+    """EARLIEST_ENTRY_LOCAL_HOUR raises (never lowers) a station's same-day
+    entry start past its own STATION_ACTIVE_HOURS start. Same-day only --
+    next-day evaluation (issue #687) is untouched.
+    """
+
+    def _state_at_hour(self, hour: int, station: str = "KMIA") -> WeatherState:
+        """A WeatherState whose now_local carries a specific station-local
+        hour, regardless of the real wall-clock UTC hour -- proves the gate
+        reads the station-localized field, not UTC 'now' (issue #1506 test
+        requirement: timezone must be the station's own local zone)."""
+        local_now = _FROZEN_NOW.replace(hour=hour)
+        return WeatherState(
+            station=station,
+            now_local=local_now,
+            sunset_local=local_now.replace(hour=20),
+            current_high_f=75.0,
+            current_high_time=local_now,
+            latest_temp_f=72.0,
+            latest_temp_time=local_now,
+            forecast_high_f=80.0,
+        )
+
+    def _miami_market(self, group_title: str = "90-95°F", prices: str = '["0.20", "0.80"]') -> dict:
+        market = _market(
+            group_title=group_title,
+            question="Will the highest temperature in Miami be " + group_title + "?",
+            condition_id="0xmia_earliest",
+        )
+        today = datetime.now(timezone.utc).date()
+        market["endDate"] = datetime(
+            today.year, today.month, today.day, 23, 59, 59, tzinfo=timezone.utc
+        ).isoformat()
+        market["outcomePrices"] = prices
+        return market
+
+    def test_default_hour_6_is_a_noop_no_db(self, monkeypatch):
+        """Default (no setting): behaviour is byte-for-byte unchanged -- a
+        station-local hour at its own STATION_ACTIVE_HOURS start (KMIA: 6)
+        still evaluates normally."""
+        monkeypatch.delenv("EARLIEST_ENTRY_LOCAL_HOUR", raising=False)
+        weather = {"KMIA": self._state_at_hour(6)}
+        market = self._miami_market()
+
+        with patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0), \
+                patch("src.strategy.scanner.MODEL_PROB_CAP", 1.0):
+            candidates, snapshots = scan_markets(weather, [market])
+
+        assert len(candidates) == 1
+        assert len(snapshots) == 1
+
+    def test_setting_9_skips_local_hour_7_via_live_config(self, caplog):
+        """db provided: EARLIEST_ENTRY_LOCAL_HOUR=9 is read from
+        get_live_config(db) and skips a 07:00 local same-day market under
+        the new 'before_earliest_entry_hour' skip reason."""
+        from unittest.mock import MagicMock
+        weather = {"KMIA": self._state_at_hour(7)}
+        market = self._miami_market()
+        mock_db = MagicMock()
+        mock_db.get_station_override.return_value = None
+        mock_db.get_all_config.return_value = {"EARLIEST_ENTRY_LOCAL_HOUR": "9"}
+
+        with patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0), \
+                patch("src.strategy.scanner.MODEL_PROB_CAP", 1.0):
+            with caplog.at_level(logging.DEBUG):
+                candidates, snapshots = scan_markets(weather, [market], db=mock_db)
+
+        assert candidates == []
+        assert snapshots == []
+        assert any("before_earliest_entry_hour" in r.message for r in caplog.records)
+
+    def test_setting_9_allows_local_hour_9(self):
+        """At exactly the configured hour, the market is evaluated (half-open
+        window, same convention as STATION_ACTIVE_HOURS)."""
+        from unittest.mock import MagicMock
+        weather = {"KMIA": self._state_at_hour(9)}
+        market = self._miami_market()
+        mock_db = MagicMock()
+        mock_db.get_station_override.return_value = None
+        mock_db.get_all_config.return_value = {"EARLIEST_ENTRY_LOCAL_HOUR": "9"}
+
+        with patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0), \
+                patch("src.strategy.scanner.MODEL_PROB_CAP", 1.0):
+            candidates, snapshots = scan_markets(weather, [market], db=mock_db)
+
+        assert len(candidates) == 1
+        assert len(snapshots) == 1
+
+    def test_per_station_later_start_unaffected_by_lower_setting(self, caplog):
+        """RKSI's own STATION_ACTIVE_HOURS start (11:00) is never moved
+        earlier by a setting of 9: effective_start = max(11, 9) = 11, so a
+        10:00 local market is still skipped -- same skip reason, driven by
+        the station's own later start, not loosened by the global setting."""
+        from unittest.mock import MagicMock
+        weather = {"RKSI": self._state_at_hour(10, station="RKSI")}
+        market = _market(
+            group_title="80-85°F",
+            question="Will the highest temperature in Seoul be 80-85°F?",
+            condition_id="0xrksi_earliest",
+        )
+        today = datetime.now(timezone.utc).date()
+        market["endDate"] = datetime(
+            today.year, today.month, today.day, 23, 59, 59, tzinfo=timezone.utc
+        ).isoformat()
+        market["outcomePrices"] = '["0.20", "0.80"]'
+        mock_db = MagicMock()
+        mock_db.get_station_override.return_value = None
+        mock_db.get_all_config.return_value = {"EARLIEST_ENTRY_LOCAL_HOUR": "9"}
+
+        with patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0), \
+                patch("src.strategy.scanner.MODEL_PROB_CAP", 1.0):
+            with caplog.at_level(logging.DEBUG):
+                candidates, snapshots = scan_markets(weather, [market], db=mock_db)
+
+        assert candidates == []
+        assert snapshots == []
+        assert any("before_earliest_entry_hour" in r.message for r in caplog.records)
+
+    def test_next_day_evaluation_unaffected(self, monkeypatch):
+        """Next-day evaluation (issue #687) is explicitly excluded from this
+        gate: a 07:00 local next-day candidate is still evaluated even with
+        EARLIEST_ENTRY_LOCAL_HOUR=9 (no-DB env-var path)."""
+        monkeypatch.setenv("NEXT_DAY_EVALUATION", "true")
+        monkeypatch.setenv("EARLIEST_ENTRY_LOCAL_HOUR", "9")
+        weather = {"KMIA": self._state_at_hour(7)}
+        tomorrow = datetime.now(timezone.utc) + timedelta(days=1, hours=6)
+        market = _market(
+            group_title="80-85°F",
+            question="Will the highest temperature in Miami be 80-85°F?",
+            condition_id="0xnextday_earliest",
+        ) | {"endDate": tomorrow.isoformat(), "outcomePrices": '["0.30","0.70"]'}
+
+        with patch("src.strategy.scanner._fetch_next_day_forecast", return_value=(82.0, 3.0)):
+            candidates, snapshots = scan_markets(weather, [market])
+
+        assert len(snapshots) == 1
+        assert snapshots[0]["is_next_day"] == 1
+
+    def test_empty_env_default_changes_nothing_no_db(self, monkeypatch):
+        """No-DB path: unset EARLIEST_ENTRY_LOCAL_HOUR falls back to the
+        default (6), which is a no-op for KMIA's own 6:00 start."""
+        monkeypatch.delenv("EARLIEST_ENTRY_LOCAL_HOUR", raising=False)
+        weather = {"KMIA": self._state_at_hour(6)}
+        market = self._miami_market()
+
+        with patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0), \
+                patch("src.strategy.scanner.MODEL_PROB_CAP", 1.0):
+            candidates, snapshots = scan_markets(weather, [market])
+
+        assert len(candidates) == 1
+
+    def test_takes_effect_without_restart(self):
+        """Toggling EARLIEST_ENTRY_LOCAL_HOUR between two scan_markets()
+        calls against the same long-lived db mock changes outcome on the
+        very next call -- no process restart, no module reload, required
+        (same pattern as EXCLUDED_STATIONS, issue #1500)."""
+        from unittest.mock import MagicMock
+        weather = {"KMIA": self._state_at_hour(7)}
+        market = self._miami_market()
+        mock_db = MagicMock()
+        mock_db.get_station_override.return_value = None
+
+        mock_db.get_all_config.return_value = {"EARLIEST_ENTRY_LOCAL_HOUR": "6"}
+        with patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0), \
+                patch("src.strategy.scanner.MODEL_PROB_CAP", 1.0):
+            candidates_before, _ = scan_markets(weather, [market], db=mock_db)
+        assert len(candidates_before) == 1
+
+        mock_db.get_all_config.return_value = {"EARLIEST_ENTRY_LOCAL_HOUR": "9"}
+        with patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0), \
+                patch("src.strategy.scanner.MODEL_PROB_CAP", 1.0):
+            candidates_after, snapshots_after = scan_markets(weather, [market], db=mock_db)
+        assert candidates_after == []
+        assert snapshots_after == []
+
+
+# ---------------------------------------------------------------------------
 # Next-day evaluation (issue #687)
 # ---------------------------------------------------------------------------
 

@@ -4811,6 +4811,13 @@ _CONFIG_META: dict[str, dict] = {
         "type": "stationlist",
         "group": "stations",
     },
+    "EARLIEST_ENTRY_LOCAL_HOUR": {
+        "description": "Earliest station-local hour (0-23) a SAME-DAY market may open a new entry; raised (never lowered) against each station's own STATION_ACTIVE_HOURS start (issue #1506). Next-day shadow evaluation is unaffected. Default 6 preserves today's behaviour.",
+        "type": "int",
+        "group": "stations",
+        "min": 0,
+        "max": 23,
+    },
 }
 
 _EMOS_VALID_MODES = frozenset({"legacy", "emos_shadow", "emos_primary"})
