@@ -86,23 +86,8 @@ def test_copy_live_settle_timer_install_section():
     assert config.get("Install", "WantedBy") == "timers.target"
 
 
-def test_install_sh_includes_copy_live_settle_units():
+def test_install_sh_no_longer_installs_or_enables_copy_live_settle_units():
+    """#1501: copy-trading wound down -- install.sh must not (re-)install or
+    enable meteoedge-copy-live-settle on a fresh host."""
     content = INSTALL_SH_PATH.read_text()
-    assert 'install -m 0644 "$SRC_DIR/meteoedge-copy-live-settle.service"' in content, \
-        "install.sh should install meteoedge-copy-live-settle.service"
-    assert 'install -m 0644 "$SRC_DIR/meteoedge-copy-live-settle.timer"' in content, \
-        "install.sh should install meteoedge-copy-live-settle.timer"
-    assert '"$UNIT_DIR/meteoedge-copy-live-settle.service"' in content
-    assert '"$UNIT_DIR/meteoedge-copy-live-settle.timer"' in content
-
-
-def test_install_sh_enables_copy_live_settle_timer():
-    content = INSTALL_SH_PATH.read_text()
-    assert "systemctl enable --now meteoedge-copy-live-settle.timer" in content, \
-        "install.sh should enable and start meteoedge-copy-live-settle.timer"
-
-
-def test_install_sh_includes_copy_live_settle_in_status_check():
-    content = INSTALL_SH_PATH.read_text()
-    assert "meteoedge-copy-live-settle.timer" in content, \
-        "install.sh should include meteoedge-copy-live-settle.timer in status output"
+    assert "meteoedge-copy-live-settle" not in content

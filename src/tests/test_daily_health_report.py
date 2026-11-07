@@ -497,9 +497,9 @@ class TestTableLivenessQuietOkDisjoint:
     def test_quiet_ok_tables_never_in_monitored_specs(self):
         """A table meant to be allowed to go quiet must never end up in the
         monitored spec list -- that would WARN on it every single day it is
-        legitimately empty (e.g. copy_live_positions before copy-trading
-        goes live, risk_state on a non-trading day) and train everyone to
-        ignore the report, which is the exact failure #1237 is about."""
+        legitimately empty (e.g. risk_state on a non-trading day) and train
+        everyone to ignore the report, which is the exact failure #1237 is
+        about."""
         monitored = {table for table, _col, _warn in TABLE_LIVENESS_SPECS}
         assert monitored.isdisjoint(TABLE_LIVENESS_QUIET_OK)
 

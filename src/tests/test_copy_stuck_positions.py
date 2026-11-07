@@ -8,7 +8,6 @@ import pytest
 from src.data.db import Database
 from src.scripts import copy_abandon
 from src.scripts.copy_settle import run_once
-from src.scripts.daily_health_report import _build_copy_stuck
 
 W = "0xwallet1"
 
@@ -261,25 +260,6 @@ def test_per_wallet_pnl_reports_incomplete_denominator():
     assert row["n_not_due"] == 1 and row["n_abandoned"] == 1
 
 
-def test_health_report_lists_stuck_and_counts_not_due_separately():
-    db = Database(":memory:")
-    pid = _seed(db, hours_ago=24 * 9)
-    _seed(db, market="0xlong", hours_ago=24 * 9)
-    db.set_copy_position_stuck_level(pid, 3, _iso(0), "CLOSED_AMBIGUOUS")
-    lines, flags = _build_copy_stuck(db, datetime.now(timezone.utc))
-    text = "\n".join(lines)
-    assert flags == {"n_stuck": 1, "n_urgent": 1}
-    assert f"id={pid}" in text and W in text and "0xm" in text and "CLOSED_AMBIGUOUS" in text
-    assert "not due (long-dated, not stuck): 1" in text
-
-
-def test_health_report_clean_when_only_long_dated():
-    db = Database(":memory:")
-    _seed(db, hours_ago=24 * 9)
-    _, flags = _build_copy_stuck(db, datetime.now(timezone.utc))
-    assert flags == {"n_stuck": 0, "n_urgent": 0}
-
-
 def test_migration_rebuilds_old_check_and_preserves_rows(tmp_path):
     path = str(tmp_path / "old.db")
     db = Database(path)
@@ -373,17 +353,6 @@ def test_fetch_market_state_returns_liquidity_fields():
     with patch.object(pm, "fetch", lambda url, timeout=None: R()):
         st = pm.fetch_market_state("0xabc")
     assert (st["best_bid"], st["best_ask"], st["last_trade"]) == (0.86, 0.88, 0.874)
-
-
-def test_health_report_lists_past_end_trading_and_does_not_warn():
-    db = Database(":memory:")
-    pid = _seed(db, hours_ago=24 * 20)
-    _run(db, BRAZIL[0])
-    lines, flags = _build_copy_stuck(db, datetime.now(timezone.utc))
-    text = "\n".join(lines)
-    assert flags == {"n_stuck": 0, "n_urgent": 0}
-    assert f"[PAST_END_TRADING] id={pid}" in text
-    assert "still trading (not escalated): 1" in text and "not due (long-dated, not stuck): 0" in text
 
 
 # --- #1387: early (<48h) detection of verified 50/50 voids -------------------

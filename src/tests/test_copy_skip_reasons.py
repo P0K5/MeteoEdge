@@ -1,31 +1,15 @@
-"""Issue #1314: skip-reason aggregation, classification and health section."""
-from datetime import datetime, timedelta, timezone
+"""Issue #1314: skip-reason aggregation and classification.
 
-import pytest
-
+The health-report section that rendered these counts (``_build_copy_skips``/
+``_copy_skip_counts`` in ``daily_health_report.py``) was removed by #1501
+(copy-trading wind-down); the aggregation/classification module itself
+(``src/data/copy_skip_reasons.py``) is kept per #1501's explicit scope
+(data/code removal is #1502's job), so its direct unit tests stay.
+"""
 from src.data.copy_skip_reasons import (
     BREAKER, LIFECYCLE, ROUTINE, STRUCTURAL, UNKNOWN, SKIP_REASONS,
     classify, trend, accepted_ref, ACCEPTED_STRUCTURAL,
 )
-from src.data.db import Database
-from src.scripts.daily_health_report import _build_copy_skips, _copy_skip_counts, _build_verdict
-
-NOW = datetime(2026, 10, 13, 12, 0, tzinfo=timezone.utc)
-
-
-@pytest.fixture
-def db(tmp_path):
-    return Database(str(tmp_path / "t.db"))
-
-
-def _sig(db, addr, reason, age_h, placed=False):
-    db.insert_copy_signal(
-        address=addr, market="m", outcome_index=0, source_price=0.5,
-        source_trade_id=None, detected_at=(NOW - timedelta(hours=age_h)).isoformat(),
-        order_placed=1 if placed else 0,
-        fill_price=0.5 if placed else None, size_usd=1.0 if placed else None,
-        skip_reason=None if placed else reason,
-    )
 
 
 def test_classify():
@@ -52,83 +36,8 @@ def test_trend():
     assert trend(30, 7) == "SPIKE"      # 1/day baseline
 
 
-def test_counts_window_and_baseline(db):
-    for _ in range(3):
-        _sig(db, "0xa", "below_min_entry_price", 2)
-    for _ in range(14):
-        _sig(db, "0xa", "below_min_entry_price", 72)
-    _sig(db, "0xa", None, 1, placed=True)
-    _sig(db, "0xa", "below_min_entry_price", 24 * 12)  # outside baseline
-    out = _copy_skip_counts(db, NOW)
-    assert out["0xa"]["placed"] == 1
-    assert out["0xa"]["skipped"]["below_min_entry_price"] == (3, 14)
-
-
-def test_section_structural_and_verdict(db):
-    for _ in range(30):
-        _sig(db, "0xbca08c1b", "non_binary_outcome_index", 3)
-    _sig(db, "0xbca08c1b", None, 1, placed=True)
-    lines, flags = _build_copy_skips(db, NOW)
-    text = "\n".join(lines)
-    assert "placed=1 skipped=30" in text
-    assert "structural" in text and "NEW" in text
-    assert flags["n_structural"] == 30
-    verdict = "\n".join(_build_verdict([("copy_skips", lines, flags)]))
-    assert "30 structural" in verdict
-
-
-def test_section_empty_and_routine_no_verdict(db):
-    lines, flags = _build_copy_skips(db, NOW)
-    assert "no skipped signals" in "\n".join(lines)
-    for _ in range(10):
-        _sig(db, "0xb", "below_min_entry_price", 3)
-        _sig(db, "0xb", "below_min_entry_price", 48)
-    lines, flags = _build_copy_skips(db, NOW)
-    assert flags["n_structural"] == 0
-    assert "OK" in "\n".join(_build_verdict([("copy_skips", lines, flags)]))
-
-
-def test_section_query_error_degrades():
-    class Bad:
-        pass
-    lines, flags = _build_copy_skips(Bad(), NOW)
-    assert "unavailable" in "\n".join(lines)
-
-
-def _steady(db, addr, reason, n_win=5, n_base=70):
-    for _ in range(n_win):
-        _sig(db, addr, reason, 3)
-    for _ in range(n_base):
-        _sig(db, addr, reason, 72)
-
-
 def test_accepted_ref():
     assert accepted_ref("0xbca08c1b99", "non_binary_outcome_index") == "#1390"
     assert accepted_ref("0xother", "non_binary_outcome_index") is None
     assert accepted_ref("0xbca08c1b99", "missing_outcome_index") is None
     assert all(classify(r) == STRUCTURAL for _, r in ACCEPTED_STRUCTURAL)
-
-
-def test_accepted_steady_annotated_no_verdict_warn(db):
-    _steady(db, "0xbca08c1b99", "non_binary_outcome_index")
-    lines, flags = _build_copy_skips(db, NOW)
-    text = "\n".join(lines)
-    assert "accepted (#1390)" in text and "[WARN]" not in text
-    assert flags["n_structural"] == 0 and flags["n_accepted"] == 5
-    assert "OK" in "\n".join(_build_verdict([("copy_skips", lines, flags)]))
-
-
-def test_accepted_spike_or_new_still_warns(db):
-    _steady(db, "0xbca08c1b99", "non_binary_outcome_index", n_win=30, n_base=7)
-    lines, flags = _build_copy_skips(db, NOW)
-    assert "accepted" not in "\n".join(lines) and "[WARN]" in "\n".join(lines)
-    assert flags["n_structural"] == 30
-
-
-def test_unlisted_wallet_and_reason_still_warn(db):
-    _steady(db, "0xzzz", "non_binary_outcome_index")
-    _steady(db, "0xbca08c1b99", "missing_outcome_index")
-    _steady(db, "0xbca08c1b99", "brand_new_reason")
-    lines, flags = _build_copy_skips(db, NOW)
-    assert "accepted" not in "\n".join(lines)
-    assert flags["n_structural"] == 10 and flags["n_unknown"] == 5

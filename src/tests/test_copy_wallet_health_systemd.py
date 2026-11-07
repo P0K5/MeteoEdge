@@ -87,26 +87,11 @@ def test_copy_health_timer_install_section():
     assert config.get("Install", "WantedBy") == "timers.target"
 
 
-def test_install_sh_includes_copy_health_units():
+def test_install_sh_no_longer_installs_or_enables_copy_health_units():
+    """#1501: copy-trading wound down -- install.sh must not (re-)install or
+    enable meteoedge-copy-health on a fresh host."""
     content = INSTALL_SH_PATH.read_text()
-    assert 'install -m 0644 "$SRC_DIR/meteoedge-copy-health.service"' in content, \
-        "install.sh should install meteoedge-copy-health.service"
-    assert 'install -m 0644 "$SRC_DIR/meteoedge-copy-health.timer"' in content, \
-        "install.sh should install meteoedge-copy-health.timer"
-    assert '"$UNIT_DIR/meteoedge-copy-health.service"' in content
-    assert '"$UNIT_DIR/meteoedge-copy-health.timer"' in content
-
-
-def test_install_sh_enables_copy_health_timer():
-    content = INSTALL_SH_PATH.read_text()
-    assert "systemctl enable --now meteoedge-copy-health.timer" in content, \
-        "install.sh should enable and start meteoedge-copy-health.timer"
-
-
-def test_install_sh_includes_copy_health_in_status_check():
-    content = INSTALL_SH_PATH.read_text()
-    assert "meteoedge-copy-health.timer" in content, \
-        "install.sh should include meteoedge-copy-health.timer in status output"
+    assert "meteoedge-copy-health" not in content
 
 
 def test_copy_health_timer_starts_after_screening_timer_with_adequate_gap():

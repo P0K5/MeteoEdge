@@ -42,10 +42,10 @@ def test_healthy():
 
 
 def test_overdue():
-    old = _timer(last="Mon 2026-10-12 11:50:00 UTC")  # 48h ago
-    _lines, flags = _run(timers={"meteoedge-copy-settle": old})
+    old = _timer(last="Mon 2026-10-12 11:50:00 UTC")  # just past the 48h (2x24h) threshold
+    _lines, flags = _run(timers={"meteoedge-settle": old})
     assert flags["status"] == "WARN"
-    assert "meteoedge-copy-settle overdue" in flags["details"][0]
+    assert "meteoedge-settle overdue" in flags["details"][0]
 
 
 def test_daily_job_within_two_intervals_ok():
@@ -61,18 +61,22 @@ def test_failed():
 
 
 def test_timer_inactive():
-    lines, flags = _run(timers={"meteoedge-copy-health": _timer(active="inactive")})
+    lines, flags = _run(timers={"meteoedge-settle": _timer(active="inactive")})
     assert flags["status"] == "WARN"
     assert any("[INACTIVE]" in ln for ln in lines)
 
 
-def test_not_installed_and_never_run_do_not_warn():
+def test_not_installed_does_not_warn():
     missing = _timer(load="not-found", active="inactive", last="")
-    fresh = _timer(last="n/a")
-    lines, flags = _run(timers={"meteoedge-copy-settle": missing,
-                                "meteoedge-settle": fresh})
+    lines, flags = _run(timers={"meteoedge-settle": missing})
     assert flags["status"] == "OK"
     assert any("not installed" in ln for ln in lines)
+
+
+def test_never_run_does_not_warn():
+    fresh = _timer(last="n/a")
+    lines, flags = _run(timers={"meteoedge-settle": fresh})
+    assert flags["status"] == "OK"
     assert any("never run" in ln for ln in lines)
 
 
