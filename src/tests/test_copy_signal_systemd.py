@@ -80,45 +80,9 @@ def test_copy_signal_service_install_section():
     assert config.get("Install", "WantedBy") == "multi-user.target"
 
 
-def test_install_sh_includes_copy_signal_service():
-    """Verify install.sh copies the copy-signal service file."""
+def test_install_sh_no_longer_installs_or_enables_copy_signal_service():
+    """#1501: copy-trading wound down -- install.sh must not (re-)install or
+    enable meteoedge-copy-signals.service on a fresh host."""
     install_sh_path = Path(__file__).resolve().parents[2] / "deploy" / "systemd" / "install.sh"
     content = install_sh_path.read_text()
-
-    # Verify copy-signal service is installed
-    assert 'install -m 0644 "$SRC_DIR/meteoedge-copy-signals.service"' in content, \
-        "install.sh should install meteoedge-copy-signals.service"
-
-    # Verify it's being installed to the right place
-    assert '"$UNIT_DIR/meteoedge-copy-signals.service"' in content, \
-        "install.sh should install service to $UNIT_DIR"
-
-
-def test_install_sh_enables_copy_signal_service():
-    """Verify install.sh enables the copy-signal service."""
-    install_sh_path = Path(__file__).resolve().parents[2] / "deploy" / "systemd" / "install.sh"
-    content = install_sh_path.read_text()
-
-    # Verify copy-signal service is enabled
-    assert "systemctl enable --now meteoedge-copy-signals.service" in content, \
-        "install.sh should enable and start meteoedge-copy-signals.service"
-
-
-def test_install_sh_includes_copy_signal_in_status_check():
-    """Verify install.sh includes copy-signal in the final status check."""
-    install_sh_path = Path(__file__).resolve().parents[2] / "deploy" / "systemd" / "install.sh"
-    content = install_sh_path.read_text()
-
-    # Verify copy-signal is in the status command
-    assert "meteoedge-copy-signals.service" in content, \
-        "install.sh should include meteoedge-copy-signals.service in status output"
-
-
-def test_install_sh_includes_copy_signal_in_help():
-    """Verify install.sh includes copy-signal in the help text."""
-    install_sh_path = Path(__file__).resolve().parents[2] / "deploy" / "systemd" / "install.sh"
-    content = install_sh_path.read_text()
-
-    # Verify copy-signal is mentioned in the help output
-    assert 'journalctl -u meteoedge-copy-signals.service' in content, \
-        "install.sh should include copy-signal in the help text"
+    assert "meteoedge-copy-signals" not in content

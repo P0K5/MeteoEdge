@@ -53,10 +53,6 @@ if str(_HERE.parents[1]) not in sys.path:
     sys.path.insert(0, str(_HERE.parents[1]))
 
 from src.logging_config import setup_logging  # noqa: E402
-from src.data.copy_skip_reasons import (  # noqa: E402
-    BASELINE_DAYS as _SKIP_BASELINE_DAYS,
-    WINDOW_HOURS as _SKIP_WINDOW_HOURS,
-)
 from src.data.log_error_classes import section as _build_log_errors  # noqa: E402
 
 #: Start of the M3 clean-data collection window, and the date station-days are
@@ -156,16 +152,15 @@ TABLE_LIVENESS_SPECS: "list[tuple[str, str, int]]" = [
     ("model_forecast_log", "logged_at", 2880),
 ]
 
-#: Tables that legitimately go quiet -- `copy_live_positions` is empty until
-#: copy-trading goes live, `risk_state` is written only on days the bot
-#: actually trades -- and must therefore never appear in
+#: Tables that legitimately go quiet -- `risk_state` is written only on days
+#: the bot actually trades -- and must therefore never appear in
 #: ``TABLE_LIVENESS_SPECS``. This is an explicit allow-list, not a sweep of
 #: every table (issue #1237 explicitly rules out the sweep: an unconditional
-#: check would WARN on these two every single day and train everyone to
-#: ignore the report). Kept as a real constant, and asserted disjoint from
+#: check would WARN on it every single day and train everyone to ignore the
+#: report). Kept as a real constant, and asserted disjoint from
 #: ``TABLE_LIVENESS_SPECS`` by a test, rather than left as an implicit
 #: "just don't add them" convention nobody notices breaking.
-TABLE_LIVENESS_QUIET_OK: "set[str]" = {"copy_live_positions", "risk_state"}
+TABLE_LIVENESS_QUIET_OK: "set[str]" = {"risk_state"}
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1157,246 +1152,6 @@ def _build_emos_progress(db, today: datetime) -> "tuple[list[str], dict]":
     return lines, flags
 
 
-def _build_copy_stuck(db, today: datetime) -> "tuple[list[str], dict]":
-    """Copy-trading paper positions escalated by ``copy_settle`` (issue #1301):
-    PAST_END_UNRESOLVED, CLOSED_AMBIGUOUS, UNRETRIEVABLE. Healthy long-dated
-    open markets (NOT_DUE) are only counted, never called stuck. Lists every
-    escalated position with id, wallet, market, age and entry price."""
-    from src.data.copy_stuck import LEVEL_LABELS, STUCK_HOURS, age_hours
-    lines = ["Copy-trading stuck positions", "-" * 28]
-    flags: dict = {"n_stuck": 0, "n_urgent": 0}
-    try:
-        open_rows = db.get_open_copy_positions()
-        stuck = sorted(
-            (r for r in open_rows if int(r.get("stuck_level") or 0) >= 1),
-            key=lambda r: (-int(r["stuck_level"]), r["id"]),
-        )
-        n_not_due = 0
-        trading: list = []  # PAST_END_TRADING (#1388): level 0, listed, never WARNs
-        for r in open_rows:
-            try:
-                if int(r.get("stuck_level") or 0) == 0 and r.get("stuck_category") == "PAST_END_TRADING":
-                    trading.append(r)
-                elif int(r.get("stuck_level") or 0) == 0 and age_hours(r["entry_ts"], today) > STUCK_HOURS:
-                    n_not_due += 1
-            except (ValueError, KeyError, TypeError):
-                pass
-        flags["n_stuck"] = len(stuck)
-        flags["n_urgent"] = sum(1 for r in stuck if int(r["stuck_level"]) >= 2)
-        stake = sum(float(r["stake_usd"]) for r in stuck)
-        lines.append(
-            f"  Escalated: {len(stuck)} (urgent: {flags['n_urgent']})  |  "
-            f"stake unresolved: ${stake:.2f}  |  "
-            f"open >48h but not due (long-dated, not stuck): {n_not_due}  |  "
-            f"past endDate but still trading (not escalated): {len(trading)}"
-        )
-        for r in sorted(trading, key=lambda r: r["id"]):
-            lines.append(
-                f"  [PAST_END_TRADING] id={r['id']} wallet={r['address']} market={r['market']} "
-                f"entry={float(r['entry_price']):.3f} stake=${float(r['stake_usd']):.2f}"
-            )
-        if stuck:
-            lines.append(
-                "  [WARN] escalated positions are EXCLUDED from ROI/win-rate; operator: "
-                "python -m src.scripts.copy_abandon (--settle-at-price 0.5 for a verified 50/50 void)"
-            )
-        for r in stuck:
-            lines.append(
-                f"  [{r.get('stuck_category') or '?'}/{LEVEL_LABELS[int(r['stuck_level'])]}] "
-                f"id={r['id']} wallet={r['address']} market={r['market']} "
-                f"age={age_hours(r['entry_ts'], today) / 24:.1f}d "
-                f"entry={float(r['entry_price']):.3f} stake=${float(r['stake_usd']):.2f}"
-            )
-    except Exception:
-        log.exception("Copy stuck-position query failed")
-        lines.append("  (unavailable -- query error)")
-    lines.append("")
-    return lines, flags
-
-
-#: A live ``pending`` row older than this is stale (issue #1393): a healthy
-#: order resolves to filled/rejected within the executor's fill-wait (seconds
-#: to minutes) plus one settle cycle, so 2h means a crash mid-cycle.
-LIVE_PENDING_STALE_HOURS = 2
-
-#: An unresolved ``cancel_failed_ghost`` row older than this is escalated
-#: (issue #1396, design on #1365). Reuses the live 48h threshold
-#: (``copy_stuck.STUCK_HOURS``). Alert-only: ``recover_ghost_orders`` still
-#: owns every status change; this only changes what the report says.
-LIVE_GHOST_ESCALATE_HOURS = 48
-
-
-def _build_copy_live_stuck(db, today: datetime) -> "tuple[list[str], dict]":
-    """Live copy-trading stuck positions (issue #1393, design on #1365).
-
-    READ-ONLY. Reads ``stuck_level``/``stuck_category``/``stuck_first_seen_at``
-    written by ``copy_live_settle`` (#1392). Lists escalated ``filled``/
-    ``partial`` rows; ``pending`` rows older than ``LIVE_PENDING_STALE_HOURS``
-    and unresolved ``cancel_failed_ghost`` rows are separate alert-only
-    categories (no status/P&L/exposure change). The exposure line uses
-    ``live_exposure_usd`` exactly as ``copy_signal_loop`` does (open rows +
-    unresolved ghosts, #1395).
-    """
-    from src.config import get_live_config
-    from src.data.copy_pnl import live_exposure_usd
-    from src.data.copy_stuck import LEVEL_LABELS, age_hours
-    lines = ["Live copy-trading stuck positions", "-" * 33]
-    flags: dict = {"n_stuck": 0, "n_urgent": 0, "n_pending_stale": 0, "n_ghost": 0,
-                   "n_ghost_escalated": 0}
-    try:
-        open_rows = db.get_open_copy_live_positions()
-        stuck = sorted(
-            (r for r in open_rows if r["status"] in ("filled", "partial")
-             and int(r.get("stuck_level") or 0) >= 1),
-            key=lambda r: (-int(r["stuck_level"]), r["id"]),
-        )
-        stale_pending = []
-        for r in open_rows:
-            try:
-                if r["status"] == "pending" and age_hours(r["entry_ts"], today) > LIVE_PENDING_STALE_HOURS:
-                    stale_pending.append(r)
-            except (ValueError, KeyError, TypeError):
-                pass
-        ghosts = sorted(db.get_ghost_order_positions(), key=lambda r: r["id"])
-        flags["n_stuck"] = len(stuck)
-        flags["n_urgent"] = sum(1 for r in stuck if int(r["stuck_level"]) >= 2)
-        flags["n_pending_stale"] = len(stale_pending)
-        flags["n_ghost"] = len(ghosts)
-        flags["n_ghost_escalated"] = sum(
-            1 for r in ghosts if age_hours(r["entry_ts"], today) > LIVE_GHOST_ESCALATE_HOURS
-        )
-        stake = sum(float(r["stake_usd"]) for r in stuck)
-        lines.append(
-            f"  Unresolved: {len(stuck)} (urgent: {flags['n_urgent']})  |  "
-            f"stake unresolved: ${stake:.2f}  |  "
-            f"stale pending (>{LIVE_PENDING_STALE_HOURS}h): {len(stale_pending)}  |  "
-            f"unresolved cancel_failed_ghost: {len(ghosts)} "
-            f"(escalated >{LIVE_GHOST_ESCALATE_HOURS}h: {flags['n_ghost_escalated']})"
-        )
-        exposure = live_exposure_usd(db)
-        cap = float(get_live_config(db)["COPY_LIVE_MAX_TOTAL_EXPOSURE_USD"])
-        lines.append(
-            f"  Unsettled live exposure counted: ${exposure:.2f} of cap ${cap:.2f} "
-            f"({len(open_rows)} open row(s) + {len(ghosts)} unresolved ghost(s), "
-            f"ghosts counted at stake_usd until recovery resolves them)"
-        )
-        if exposure > cap:
-            lines.append("  [WARN] counted live exposure is above COPY_LIVE_MAX_TOTAL_EXPOSURE_USD")
-        if stuck:
-            lines.append(
-                "  [WARN] stuck live rows still count as exposure and are invisible to "
-                "the breaker; alert-only -- no live abandon path exists (#1365)"
-            )
-        for r in stuck:
-            lines.append(
-                f"  [{r.get('stuck_category') or '?'}/{LEVEL_LABELS.get(int(r['stuck_level']), '?')}] "
-                f"id={r['id']} wallet={r['address']} market={r['market']} "
-                f"age={age_hours(r['entry_ts'], today) / 24:.1f}d "
-                f"status={r['status']} stake=${float(r['stake_usd']):.2f}"
-            )
-        for r in stale_pending:
-            lines.append(
-                f"  [STALE_PENDING] id={r['id']} wallet={r['address']} market={r['market']} "
-                f"age={age_hours(r['entry_ts'], today):.1f}h stake=${float(r['stake_usd']):.2f}"
-            )
-        for r in ghosts:
-            ghost_age = age_hours(r["entry_ts"], today)
-            tag = "GHOST_ESCALATED" if ghost_age > LIVE_GHOST_ESCALATE_HOURS else "GHOST_UNRESOLVED"
-            lines.append(
-                f"  [{tag}] id={r['id']} wallet={r['address']} market={r['market']} "
-                f"order={r['order_id']} age={ghost_age:.1f}h "
-                f"stake=${float(r['stake_usd']):.2f} (may be a real fill)"
-            )
-    except Exception:
-        log.exception("Live copy stuck-position query failed")
-        lines.append("  (unavailable -- query error)")
-    lines.append("")
-    return lines, flags
-
-
-def _copy_skip_counts(db, now: datetime) -> "dict":
-    """Per-wallet counts: ``{address: {"placed": n, "skipped": {reason: (window, baseline_total)}}}``.
-
-    Lives here, not in src/data, because the db-lock guard forbids `_conn`
-    reads outside db.py/scripts. Read-only; one grouped query over ``idx_copy_signals_address_detected``.
-    """
-    win_start = (now - timedelta(hours=_SKIP_WINDOW_HOURS)).isoformat()
-    base_start = (now - timedelta(hours=_SKIP_WINDOW_HOURS, days=_SKIP_BASELINE_DAYS)).isoformat()
-    with db._lock:
-        rows = db._conn.execute(
-            "SELECT address, order_placed, skip_reason, "
-            "SUM(detected_at >= ?) AS n_win, SUM(detected_at < ?) AS n_base "
-            "FROM copy_signals WHERE detected_at >= ? "
-            "GROUP BY address, order_placed, skip_reason",
-            (win_start, win_start, base_start),
-        ).fetchall()
-    out: dict = {}
-    for r in rows:
-        w = out.setdefault(r["address"], {"placed": 0, "skipped": {}})
-        if r["order_placed"]:
-            w["placed"] += int(r["n_win"] or 0)
-        elif r["skip_reason"]:
-            w["skipped"][r["skip_reason"]] = (int(r["n_win"] or 0), int(r["n_base"] or 0))
-    return out
-
-
-def _build_copy_skips(db, today: datetime) -> "tuple[list[str], dict]":
-    """Copy-signal skip reasons per wallet over the last 24h (issue #1314).
-
-    Counts only. Trend basis: 24h count vs the prior 7-day daily average
-    (NEW / SPIKE / steady). STRUCTURAL reasons (e.g. non_binary_outcome_index:
-    the wallet trades markets this engine cannot represent) are separated from
-    routine gate rejections. Each wallet line states placed vs skipped so the
-    paper-performance denominator's incompleteness is visible."""
-    from src.data.copy_skip_reasons import (
-        STRUCTURAL, UNKNOWN, accepted_ref, classify, trend,
-    )
-    lines = ["Copy-trading skipped signals (last 24h)", "-" * 38]
-    flags: dict = {"n_structural": 0, "n_unknown": 0, "n_spike": 0, "n_accepted": 0}
-    try:
-        data = _copy_skip_counts(db, today)
-        shown = False
-        for addr in sorted(data):
-            w = data[addr]
-            window = {k: v[0] for k, v in w["skipped"].items() if v[0] > 0}
-            if not window:
-                continue
-            shown = True
-            lines.append(f"  {addr}: placed={w['placed']} skipped={sum(window.values())}")
-            for reason, n in sorted(window.items(), key=lambda kv: (-kv[1], kv[0])):
-                cls = classify(reason)
-                t = trend(n, w["skipped"][reason][1])
-                avg = w["skipped"][reason][1] / _SKIP_BASELINE_DAYS
-                # Reviewed allow-list (#1390): accepted only while STEADY.
-                ref = accepted_ref(addr, reason) if t == "STEADY" else None
-                warn = cls in (STRUCTURAL, UNKNOWN) or t != "STEADY"
-                mark = "[WARN] " if warn and not ref else ""
-                note = f" accepted ({ref})" if ref else ""
-                lines.append(
-                    f"    {mark}{reason:<28} {n:>4}  {cls:<10} {t} (prior {_SKIP_BASELINE_DAYS}d avg {avg:.1f}/day){note}"
-                )
-                if ref:
-                    flags["n_accepted"] += n
-                elif cls == STRUCTURAL:
-                    flags["n_structural"] += n
-                if cls == UNKNOWN:
-                    flags["n_unknown"] += n
-                if t != "STEADY":
-                    flags["n_spike"] += 1
-        if not shown:
-            lines.append("  no skipped signals in the last 24h")
-        elif flags["n_structural"]:
-            lines.append(
-                "  [WARN] STRUCTURAL skips = wallet trades markets this engine cannot "
-                "represent; its paper record excludes them (see docs/OPERATIONS.md)"
-            )
-    except Exception:
-        log.exception("Copy skip-reason query failed")
-        lines.append("  (unavailable -- query error)")
-    lines.append("")
-    return lines, flags
-
-
 #: (is_next_day value, section label, SQL predicate on trades.is_next_day).
 #: Next-day evaluations are shadow-only by design -- they can never go live
 #: -- and since 2026-10-11 have moved in the *opposite* direction from the
@@ -1755,10 +1510,6 @@ def _build_services(db, today: datetime) -> "tuple[list[str], dict]":
 #: expected run interval in seconds. Keyed to ``OnCalendar`` in
 #: deploy/systemd/<job>.timer; src/tests asserts the two cannot drift.
 SCHEDULED_JOB_INTERVALS_S = {
-    "meteoedge-copy-settle": 15 * 60,       # *:0/15
-    "meteoedge-copy-live-settle": 15 * 60,  # *:7/15
-    "meteoedge-copy-health": 24 * 3600,     # daily 03:56 UTC
-    "meteoedge-copy-screening": 24 * 3600,  # daily 03:00 UTC
     "meteoedge-settle": 24 * 3600,          # daily 12:00 UTC
 }
 #: A job is overdue when its last trigger is older than this many intervals.
@@ -2018,28 +1769,6 @@ def _build_verdict(sections: "list[tuple[str, list[str], dict]]") -> list[str]:
     # silently stopping altogether).
     warn_issues.extend(flags_by_section.get("emos", {}).get("details", []))
 
-    copy_stuck_flags = flags_by_section.get("copy_stuck", {})
-    if copy_stuck_flags.get("n_stuck"):
-        warn_issues.append(
-            f"{copy_stuck_flags['n_stuck']} copy position(s) stuck "
-            f"({copy_stuck_flags.get('n_urgent', 0)} urgent)"
-        )
-
-    live_stuck = flags_by_section.get("copy_live_stuck", {})
-    if live_stuck.get("n_stuck") or live_stuck.get("n_pending_stale") or live_stuck.get("n_ghost"):
-        warn_issues.append(
-            f"live copy: {live_stuck.get('n_stuck', 0)} stuck, "
-            f"{live_stuck.get('n_pending_stale', 0)} stale pending, "
-            f"{live_stuck.get('n_ghost', 0)} unresolved ghost"
-        )
-
-    copy_skip_flags = flags_by_section.get("copy_skips", {})
-    if copy_skip_flags.get("n_structural") or copy_skip_flags.get("n_unknown"):
-        warn_issues.append(
-            f"copy skips: {copy_skip_flags.get('n_structural', 0)} structural, "
-            f"{copy_skip_flags.get('n_unknown', 0)} unknown-reason in 24h"
-        )
-
     # "unavailable" is the shared query-error fallback string emitted by
     # every section's own except-block -- it is intentionally checked across
     # the whole report, unlike the section-specific WARN markers above.
@@ -2082,9 +1811,6 @@ def build_report(db) -> str:
         ("pipeline", _build_pipeline),
         ("guardrails", _build_guardrails),
         ("emos", _build_emos_progress),
-        ("copy_stuck", _build_copy_stuck),
-        ("copy_live_stuck", _build_copy_live_stuck),
-        ("copy_skips", _build_copy_skips),
         ("silent_failures", _build_silent_failures),
         ("log_errors", _build_log_errors),
         ("param_change", _build_param_change_impact),

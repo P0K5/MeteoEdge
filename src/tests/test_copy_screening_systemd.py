@@ -82,23 +82,8 @@ def test_copy_screening_timer_install_section():
     assert config.get("Install", "WantedBy") == "timers.target"
 
 
-def test_install_sh_includes_copy_screening_units():
+def test_install_sh_no_longer_installs_or_enables_copy_screening_units():
+    """#1501: copy-trading wound down -- install.sh must not (re-)install or
+    enable meteoedge-copy-screening on a fresh host."""
     content = INSTALL_SH_PATH.read_text()
-    assert 'install -m 0644 "$SRC_DIR/meteoedge-copy-screening.service"' in content, \
-        "install.sh should install meteoedge-copy-screening.service"
-    assert 'install -m 0644 "$SRC_DIR/meteoedge-copy-screening.timer"' in content, \
-        "install.sh should install meteoedge-copy-screening.timer"
-    assert '"$UNIT_DIR/meteoedge-copy-screening.service"' in content
-    assert '"$UNIT_DIR/meteoedge-copy-screening.timer"' in content
-
-
-def test_install_sh_enables_copy_screening_timer():
-    content = INSTALL_SH_PATH.read_text()
-    assert "systemctl enable --now meteoedge-copy-screening.timer" in content, \
-        "install.sh should enable and start meteoedge-copy-screening.timer"
-
-
-def test_install_sh_includes_copy_screening_in_status_check():
-    content = INSTALL_SH_PATH.read_text()
-    assert "meteoedge-copy-screening.timer" in content, \
-        "install.sh should include meteoedge-copy-screening.timer in status output"
+    assert "meteoedge-copy-screening" not in content
