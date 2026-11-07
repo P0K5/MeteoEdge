@@ -910,6 +910,20 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     # (no station excluded). See parse_station_list() below for the shared
     # comma-separated-list parser.
     "EXCLUDED_STATIONS": "",
+    # Earliest same-day entry hour (issue #1506): analysis of same-day shadow
+    # results by station-local entry hour showed entries before 09:00 local
+    # lose money in every period tested (mostly "certain NO" bets placed
+    # before the day's heating has developed). The scanner's same-day loop
+    # (src/strategy/scanner.py) raises -- never lowers -- each station's
+    # effective entry start to max(STATION_ACTIVE_HOURS[station].start,
+    # EARLIEST_ENTRY_LOCAL_HOUR); a per-station later start (e.g. RKSI/RKPK/
+    # ZGSZ at 11:00) is unaffected. Default 6 preserves today's behaviour
+    # (every STATION_ACTIVE_HOURS start is already >= 6). Live-config-backed,
+    # same pattern as EXCLUDED_STATIONS above -- takes effect on the next
+    # poll, no restart. Does NOT apply to next-day evaluation (issue #687),
+    # which is shadow-only research on tomorrow's market and stays excluded
+    # from every decision.
+    "EARLIEST_ENTRY_LOCAL_HOUR": 6,
 }
 
 

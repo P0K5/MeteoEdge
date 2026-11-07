@@ -2325,6 +2325,56 @@ class TestConfigEndpoint:
         finally:
             dash_api.set_db(original)
 
+    def test_patch_earliest_entry_local_hour_valid_value(self, client):
+        """PATCH /api/config accepts an in-range hour for
+        EARLIEST_ENTRY_LOCAL_HOUR (issue #1506)."""
+        db = self._setup_db()
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.patch("/api/config", json={"key": "EARLIEST_ENTRY_LOCAL_HOUR", "value": 9})
+            assert resp.status_code == 200
+            assert db.get_config("EARLIEST_ENTRY_LOCAL_HOUR") == "9"
+        finally:
+            dash_api.set_db(original)
+
+    def test_patch_earliest_entry_local_hour_rejects_out_of_range(self, client):
+        """24 is out of the [0, 23] range and must be rejected (issue #1506)."""
+        db = self._setup_db()
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.patch("/api/config", json={"key": "EARLIEST_ENTRY_LOCAL_HOUR", "value": 24})
+            assert resp.status_code >= 400
+        finally:
+            dash_api.set_db(original)
+
+    def test_patch_earliest_entry_local_hour_rejects_negative(self, client):
+        """A negative hour must be rejected (issue #1506)."""
+        db = self._setup_db()
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.patch("/api/config", json={"key": "EARLIEST_ENTRY_LOCAL_HOUR", "value": -1})
+            assert resp.status_code >= 400
+        finally:
+            dash_api.set_db(original)
+
+    def test_earliest_entry_local_hour_in_stations_group(self, client):
+        """GET /api/config must surface EARLIEST_ENTRY_LOCAL_HOUR under the
+        'stations' group with its default value (issue #1506)."""
+        db = self._setup_db()
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.get("/api/config")
+            data = resp.json()
+            assert "stations" in data
+            assert "EARLIEST_ENTRY_LOCAL_HOUR" in data["stations"]
+            assert data["stations"]["EARLIEST_ENTRY_LOCAL_HOUR"]["value"] == 6
+        finally:
+            dash_api.set_db(original)
+
     def test_config_entry_has_required_fields(self, client):
         """Each config entry must have required fields."""
         db = self._setup_db()
