@@ -757,6 +757,125 @@ class TestEntryGates:
         assert len(snap_for_side) == 1
         assert snap_for_side[0]["gate_verdict"] == "day_mismatch_shadow"
         assert any("day-mismatch" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Station exclusion (issue #1500)
+# ---------------------------------------------------------------------------
+
+class TestStationExclusion:
+    """EXCLUDED_STATIONS removes a station from evaluation entirely.
+
+    Unlike SHADOW_STATIONS/DISABLED_STATIONS (which still produce shadow
+    candidates -- see TestEntryGates above), an excluded station produces no
+    candidates and no snapshot at all; it is counted under a dedicated
+    'station_excluded' skip reason instead.
+    """
+
+    def _miami_market(self, group_title: str, outcome_prices: str) -> dict:
+        market = _market(
+            group_title=group_title,
+            question=f"Will the highest temperature in Miami be {group_title}?",
+            condition_id="0xmia_excl",
+        )
+        today = datetime.now(timezone.utc).date()
+        market["endDate"] = datetime(
+            today.year, today.month, today.day, 23, 59, 59, tzinfo=timezone.utc
+        ).isoformat()
+        market["outcomePrices"] = outcome_prices
+        return market
+
+    def test_excluded_station_produces_no_candidates_no_db(self, monkeypatch, caplog):
+        """db=None: EXCLUDED_STATIONS env var fallback (mirrors the
+        NEXT_DAY_EVALUATION/ENABLE_LOW_MARKETS no-DB pattern)."""
+        monkeypatch.setenv("EXCLUDED_STATIONS", "KMIA")
+        weather = {"KMIA": _state(forecast=80.0, current=75.0)}
+        market = self._miami_market("90-95°F", '["0.20", "0.80"]')
+
+        with patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0), \
+                patch("src.strategy.scanner.MODEL_PROB_CAP", 1.0):
+            with caplog.at_level(logging.DEBUG):
+                candidates, snapshots = scan_markets(weather, [market])
+
+        assert candidates == []
+        assert snapshots == []
+        assert any("station_excluded" in r.message for r in caplog.records)
+
+    def test_excluded_station_via_live_config(self, caplog):
+        """db provided: EXCLUDED_STATIONS is read from get_live_config(db)."""
+        from unittest.mock import MagicMock
+        weather = {"KMIA": _state(forecast=80.0, current=75.0)}
+        market = self._miami_market("90-95°F", '["0.20", "0.80"]')
+        mock_db = MagicMock()
+        mock_db.get_station_override.return_value = None
+        mock_db.get_all_config.return_value = {"EXCLUDED_STATIONS": "KMIA"}
+
+        with patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0), \
+                patch("src.strategy.scanner.MODEL_PROB_CAP", 1.0):
+            with caplog.at_level(logging.DEBUG):
+                candidates, snapshots = scan_markets(weather, [market], db=mock_db)
+
+        assert candidates == []
+        assert snapshots == []
+        assert any("station_excluded" in r.message for r in caplog.records)
+
+    def test_excluded_station_case_insensitive_and_whitespace(self):
+        """Lowercase / extra whitespace in the setting still matches."""
+        from unittest.mock import MagicMock
+        weather = {"KMIA": _state(forecast=80.0, current=75.0)}
+        market = self._miami_market("90-95°F", '["0.20", "0.80"]')
+        mock_db = MagicMock()
+        mock_db.get_station_override.return_value = None
+        mock_db.get_all_config.return_value = {"EXCLUDED_STATIONS": " kmia , wsss "}
+
+        with patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0), \
+                patch("src.strategy.scanner.MODEL_PROB_CAP", 1.0):
+            candidates, snapshots = scan_markets(weather, [market], db=mock_db)
+
+        assert candidates == []
+        assert snapshots == []
+
+    def test_empty_excluded_stations_changes_nothing(self):
+        """Default empty EXCLUDED_STATIONS: scanner behaves exactly as before."""
+        from unittest.mock import MagicMock
+        weather = {"KMIA": _state(forecast=80.0, current=75.0)}
+        market = self._miami_market("90-95°F", '["0.20", "0.80"]')
+        mock_db = MagicMock()
+        mock_db.get_station_override.return_value = None
+        mock_db.get_all_config.return_value = {"EXCLUDED_STATIONS": ""}
+
+        with patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0), \
+                patch("src.strategy.scanner.MODEL_PROB_CAP", 1.0):
+            candidates, snapshots = scan_markets(weather, [market], db=mock_db)
+
+        assert len(candidates) == 1
+        assert len(snapshots) == 1
+
+    def test_excluded_station_takes_effect_without_restart(self):
+        """Toggling EXCLUDED_STATIONS between two scan_markets() calls against
+        the same long-lived db mock changes outcome on the very next call --
+        no process restart, no module reload, required."""
+        from unittest.mock import MagicMock
+        weather = {"KMIA": _state(forecast=80.0, current=75.0)}
+        market = self._miami_market("90-95°F", '["0.20", "0.80"]')
+        mock_db = MagicMock()
+        mock_db.get_station_override.return_value = None
+
+        mock_db.get_all_config.return_value = {"EXCLUDED_STATIONS": ""}
+        with patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0), \
+                patch("src.strategy.scanner.MODEL_PROB_CAP", 1.0):
+            candidates_before, _ = scan_markets(weather, [market], db=mock_db)
+        assert len(candidates_before) == 1
+
+        mock_db.get_all_config.return_value = {"EXCLUDED_STATIONS": "KMIA"}
+        with patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0), \
+                patch("src.strategy.scanner.MODEL_PROB_CAP", 1.0):
+            candidates_after, snapshots_after = scan_markets(weather, [market], db=mock_db)
+        assert candidates_after == []
+        assert snapshots_after == []
+
+
+# ---------------------------------------------------------------------------
 # Next-day evaluation (issue #687)
 # ---------------------------------------------------------------------------
 

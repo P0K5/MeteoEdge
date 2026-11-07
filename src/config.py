@@ -900,7 +900,27 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     # this epic runs at ahead of the phase-7 go/no-go gate; not derived
     # from any measured fee schedule -- revisit once real fills exist.
     "COPY_LIVE_BALANCE_DRIFT_TOLERANCE_USD": 2.0,
+    # Station exclusion (issue #1500): comma-separated METAR codes to remove
+    # from evaluation entirely -- unlike SHADOW_STATIONS/DISABLED_STATIONS
+    # (which only suppress LIVE trading, leaving shadow evaluation running),
+    # an excluded station produces no scan_decisions rows, no candidates, and
+    # no shadow or live trades at all. Live-config-backed (standard pattern)
+    # so an operator can toggle it from the dashboard Config tab and have it
+    # take effect on the next poll -- no restart required. Default empty
+    # (no station excluded). See parse_station_list() below for the shared
+    # comma-separated-list parser.
+    "EXCLUDED_STATIONS": "",
 }
+
+
+def parse_station_list(raw: "str | None") -> "set[str]":
+    """Parse a comma-separated METAR-code string into an uppercase set.
+
+    Shared helper for EXCLUDED_STATIONS (issue #1500) and any other
+    comma-separated station-code config value. Blank entries are dropped;
+    codes are uppercased so dashboard/env-var input is case-insensitive.
+    """
+    return {s.strip().upper() for s in (raw or "").split(",") if s.strip()}
 
 # Maps each FORECAST_STACK value to the set of model tags whose rows should be
 # averaged (EQUAL weights) to form the ensemble μ during EMOS training. The

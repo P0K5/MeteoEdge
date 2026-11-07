@@ -403,3 +403,63 @@ class TestCopyLiveCapitalIsolation:
         from src.config import CONFIG_DEFAULTS
 
         assert "COPY_LIVE_CAPITAL_USD" not in CONFIG_DEFAULTS
+
+
+class TestParseStationList:
+    """parse_station_list() — shared comma-separated METAR-code parser
+    backing EXCLUDED_STATIONS (issue #1500)."""
+
+    def test_empty_string_returns_empty_set(self):
+        from src.config import parse_station_list
+
+        assert parse_station_list("") == set()
+
+    def test_none_returns_empty_set(self):
+        from src.config import parse_station_list
+
+        assert parse_station_list(None) == set()
+
+    def test_single_code(self):
+        from src.config import parse_station_list
+
+        assert parse_station_list("WSSS") == {"WSSS"}
+
+    def test_multiple_codes_whitespace_and_case(self):
+        from src.config import parse_station_list
+
+        assert parse_station_list(" wsss , KORD ,kmia") == {"WSSS", "KORD", "KMIA"}
+
+    def test_trailing_comma_does_not_add_empty_entry(self):
+        from src.config import parse_station_list
+
+        assert parse_station_list("WSSS,") == {"WSSS"}
+
+
+class TestExcludedStationsConfig:
+    """EXCLUDED_STATIONS (issue #1500) — the live-config station-exclusion
+    setting itself (CONFIG_DEFAULTS + get_live_config wiring)."""
+
+    def test_default_is_empty_string(self):
+        from src.config import CONFIG_DEFAULTS
+
+        assert CONFIG_DEFAULTS["EXCLUDED_STATIONS"] == ""
+
+    def test_get_live_config_default_empty(self):
+        from unittest.mock import MagicMock
+
+        from src.config import get_live_config
+
+        db = MagicMock()
+        db.get_all_config.return_value = {}
+        live = get_live_config(db)
+        assert live["EXCLUDED_STATIONS"] == ""
+
+    def test_get_live_config_reads_db_value(self):
+        from unittest.mock import MagicMock
+
+        from src.config import get_live_config
+
+        db = MagicMock()
+        db.get_all_config.return_value = {"EXCLUDED_STATIONS": "WSSS"}
+        live = get_live_config(db)
+        assert live["EXCLUDED_STATIONS"] == "WSSS"
