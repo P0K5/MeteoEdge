@@ -51,7 +51,12 @@ html{-webkit-font-smoothing:antialiased;scroll-behavior:smooth}
   --no:#b82020;--no-bg:#f8dada;--no-dim:#fef0f0;
   --warn:#8a5309;--warn-bg:#fef0d8;
   --edge:#6040b0;--edge-bg:#ece8f8;
-  --excluded:#565f82;--excluded-bg:#e4e7f2;
+  /* Teal, not the --muted blue-gray family or --edge's purple (Designer
+     review on #1500/PR #1503): the previous #565f82/#e4e7f2 pair sat only
+     ~3pt lightness from --muted at the same hue, so an excluded station was
+     visually indistinguishable from a routine outside_hours one. ~4.78:1
+     text-on-bg contrast (WCAG relative-luminance formula). */
+  --excluded:#14707f;--excluded-bg:#d8eef2;
   --sh-sm:0 1px 3px #1820380a;--sh-md:0 4px 16px #1820380f;
 }
 
