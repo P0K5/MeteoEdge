@@ -23,7 +23,7 @@ from src.config import (
     ENABLE_CLOB_ENRICHMENT, MIN_FORECAST_BRACKET_MARGIN_F, DISABLED_STATIONS,
     SHADOW_STATIONS, SHADOW_STATIONS_YES, SHADOW_STATIONS_NO,
     CONFIG_DEFAULTS, get_live_config, MODEL_PROB_CAP, FORECAST_STDDEV_F,
-    ENVELOPE_SIGMA_CLIMB_FRACTION, parse_station_list,
+    ENVELOPE_SIGMA_CLIMB_FRACTION, parse_station_list, STATION_ACTIVE_HOURS,
 )
 from src.model.envelope import (
     Bracket, WeatherState, true_probability_yes, compute_envelope,
@@ -621,6 +621,12 @@ def scan_markets(
         excluded_stations = parse_station_list(
             _live.get("EXCLUDED_STATIONS", CONFIG_DEFAULTS["EXCLUDED_STATIONS"])
         )
+        # Earliest same-day entry hour (issue #1506), default 6 -- resolved
+        # once per scan, same live-config pattern as excluded_stations above.
+        # Applied to the same-day loop only -- see the per-market gate below.
+        earliest_entry_local_hour = int(_live.get(
+            "EARLIEST_ENTRY_LOCAL_HOUR", CONFIG_DEFAULTS["EARLIEST_ENTRY_LOCAL_HOUR"]
+        ))
     else:
         shadow_yes_edge_min  = float(CONFIG_DEFAULTS["SHADOW_MIN_EDGE_CENTS_YES"])
         shadow_yes_conf_min  = float(CONFIG_DEFAULTS["SHADOW_MIN_CONFIDENCE_YES"])
@@ -649,6 +655,9 @@ def scan_markets(
         excluded_stations = parse_station_list(
             os.getenv("EXCLUDED_STATIONS", str(CONFIG_DEFAULTS["EXCLUDED_STATIONS"]))
         )
+        earliest_entry_local_hour = int(os.getenv(
+            "EARLIEST_ENTRY_LOCAL_HOUR", str(CONFIG_DEFAULTS["EARLIEST_ENTRY_LOCAL_HOUR"])
+        ))
 
     # Next-day evaluation (issue #687): per-station eligibility + which future
     # date to treat as "next-day" for that station. Computed once per scan,
@@ -779,6 +788,25 @@ def scan_markets(
 
             if wrong_date_skipped:
                 continue
+
+            if not is_next_day_eval:
+                # Issue #1506: EARLIEST_ENTRY_LOCAL_HOUR raises (never
+                # lowers) this station's same-day entry start past its own
+                # STATION_ACTIVE_HOURS start. Same-day only, by design --
+                # next-day evaluation (is_next_day_eval branch, issue #687)
+                # is shadow-only research on tomorrow's market and is
+                # explicitly excluded from this gate (and from every live or
+                # shadow decision either way).
+                _active_start, _ = STATION_ACTIVE_HOURS.get(station, (6, 23))
+                _effective_start = max(_active_start, earliest_entry_local_hour)
+                _local_hour = weather[station].now_local.hour
+                if _local_hour < _effective_start:
+                    log.debug(
+                        "[%s] -- SKIPPED %s: local hour %d < entry hour %02d:00",
+                        station, "before_earliest_entry_hour", _local_hour, _effective_start,
+                    )
+                    skip_reason_counts["before_earliest_entry_hour"] += 1
+                    continue
 
             bracket = parse_bracket_from_market(market)
             if not bracket:

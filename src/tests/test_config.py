@@ -300,3 +300,34 @@ class TestExcludedStationsConfig:
         db.get_all_config.return_value = {"EXCLUDED_STATIONS": "WSSS"}
         live = get_live_config(db)
         assert live["EXCLUDED_STATIONS"] == "WSSS"
+
+
+class TestEarliestEntryLocalHourConfig:
+    """EARLIEST_ENTRY_LOCAL_HOUR (issue #1506) -- the live-config setting
+    itself (CONFIG_DEFAULTS + get_live_config wiring). The scanner gate
+    behaviour is covered in src/tests/test_scanner.py."""
+
+    def test_default_is_6(self):
+        from src.config import CONFIG_DEFAULTS
+
+        assert CONFIG_DEFAULTS["EARLIEST_ENTRY_LOCAL_HOUR"] == 6
+
+    def test_get_live_config_default(self):
+        from unittest.mock import MagicMock
+
+        from src.config import get_live_config
+
+        db = MagicMock()
+        db.get_all_config.return_value = {}
+        live = get_live_config(db)
+        assert live["EARLIEST_ENTRY_LOCAL_HOUR"] == 6
+
+    def test_get_live_config_reads_db_value(self):
+        from unittest.mock import MagicMock
+
+        from src.config import get_live_config
+
+        db = MagicMock()
+        db.get_all_config.return_value = {"EARLIEST_ENTRY_LOCAL_HOUR": "9"}
+        live = get_live_config(db)
+        assert live["EARLIEST_ENTRY_LOCAL_HOUR"] == 9
