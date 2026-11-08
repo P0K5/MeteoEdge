@@ -6,6 +6,7 @@ this covers only call_deepseek()'s retry behavior on client-side timeouts and
 429/5xx gateway responses, plus _run()'s fail-closed handling of those errors
 (#1037: a required review that could not run must not report success).
 """
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -893,3 +894,130 @@ class TestBudgetInteraction:
         assert "PR body truncated" in packet
         assert "issue body truncated" in packet
         assert "diff truncated" in packet
+
+
+class TestPacketSectionOrderForPromptCaching:
+    """#1512: DeepSeek's prompt cache matches an identical byte prefix
+    across consecutive calls. `## Policy Summary` is the only fully STABLE
+    section (unchanged unless CLAUDE.md/agents/*.md change) and must now be
+    the first section of the user message, with all PR-variable sections
+    following it -- the opposite of the pre-fix order, which put every
+    PR-specific section first and the stable summary last, defeating the
+    cache almost every call."""
+
+    def _section_index(self, packet, heading):
+        idx = packet.find(heading)
+        assert idx != -1, f"{heading!r} missing from packet"
+        return idx
+
+    def test_policy_summary_is_the_first_section(self):
+        packet = build_review_packet(
+            _minimal_pr_meta(), [_changed_file("src/x.py")], {}, [], "STABLE_POLICY_TEXT",
+        )
+        assert packet.startswith("## Policy Summary")
+
+    def test_policy_summary_precedes_every_pr_variable_section(self):
+        issue = _issue(1, "t", "## Acceptance criteria\n- one\n")
+        pr_meta = _minimal_pr_meta(body="Closes #1\n\nSome description text.")
+        changed_files = [_changed_file("src/x.py", patch="+real change")]
+        packet = build_review_packet(pr_meta, changed_files, {}, [issue], "STABLE_POLICY_TEXT")
+
+        policy_idx = self._section_index(packet, "## Policy Summary")
+        for heading in (
+            "## Diff",
+            "## Graphify Context",
+            "## PR Metadata",
+            "## PR Description",
+            "## Changed Files",
+            "## Linked Issues",
+        ):
+            assert policy_idx < self._section_index(packet, heading), (
+                f"{heading} must come after ## Policy Summary for prompt-cache "
+                "prefix matching"
+            )
+
+    def test_policy_summary_content_still_present_verbatim(self):
+        packet = build_review_packet(
+            _minimal_pr_meta(), [], {}, [], "Key policy rules:\n- some rule",
+        )
+        assert "Key policy rules:\n- some rule" in packet
+
+    def test_pr_metadata_still_immediately_precedes_pr_description(self):
+        """Reordering must not separate these two sections -- other tests
+        (e.g. TestNonClosingReferenceLinkage) slice the packet between
+        '## PR Metadata' and '## PR Description' and expect no other
+        section heading in between."""
+        pr_meta = _minimal_pr_meta(body="Refs #1264, #1266")
+        packet = build_review_packet(pr_meta, [], {}, [], "policy")
+        metadata_block = packet.split("## PR Metadata")[1].split("## PR Description")[0]
+        assert "##" not in metadata_block
+
+    def test_two_consecutive_packets_share_a_long_stable_prefix(self):
+        """Direct regression for the caching defeat itself: two packets for
+        different PRs (different diff/metadata/description/files) must
+        still share a long common prefix because the stable Policy Summary
+        leads both -- before the fix, the first difference occurred almost
+        immediately."""
+        policy_summary = "Key policy rules:\n" + "\n".join(f"- rule {i}" for i in range(30))
+        packet_a = build_review_packet(
+            _minimal_pr_meta(number=1, title="PR A", body="Closes #1\n\nFirst PR body."),
+            [_changed_file("src/a.py", patch="+change a")],
+            {}, [], policy_summary,
+        )
+        packet_b = build_review_packet(
+            _minimal_pr_meta(number=2, title="PR B", body="Closes #2\n\nSecond, different PR body."),
+            [_changed_file("src/b.py", patch="+change b")],
+            {}, [], policy_summary,
+        )
+        common_prefix_len = len(os.path.commonprefix([packet_a, packet_b]))
+        # The whole Policy Summary section (header + content) must be part
+        # of the shared prefix.
+        assert common_prefix_len >= len("## Policy Summary\n" + policy_summary)
+
+
+class TestCacheUsageLogging:
+    """#1512 Part B: call_deepseek() discarded the full API response and
+    never read `usage` -- DeepSeek's cache-hit/miss token counts were
+    invisible outside the DeepSeek account dashboard. Now logged to stderr
+    (the script's existing logging convention) after every successful call."""
+
+    @patch("scripts.ai_reviewer.requests.post")
+    def test_logs_cache_hit_and_miss_tokens_on_success(self, mock_post, capsys):
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.ok = True
+        resp.json.return_value = {
+            "choices": [{"message": {"content": "VERDICT: PASS"}}],
+            "usage": {
+                "prompt_tokens": 5000,
+                "prompt_cache_hit_tokens": 4500,
+                "prompt_cache_miss_tokens": 500,
+                "completion_tokens": 120,
+            },
+        }
+        mock_post.return_value = resp
+
+        result = call_deepseek("https://x", "key", "model", "sys", "user")
+
+        assert result == "VERDICT: PASS"
+        err = capsys.readouterr().err
+        assert "hit=4500" in err
+        assert "miss=500" in err
+
+    @patch("scripts.ai_reviewer.requests.post")
+    def test_missing_usage_field_does_not_raise(self, mock_post, capsys):
+        """A response shaped without a `usage` key (e.g. a non-DeepSeek
+        backend or an unexpected payload) must not crash the call -- the
+        log line degrades to hit=None miss=None rather than raising."""
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.ok = True
+        resp.json.return_value = {"choices": [{"message": {"content": "VERDICT: PASS"}}]}
+        mock_post.return_value = resp
+
+        result = call_deepseek("https://x", "key", "model", "sys", "user")
+
+        assert result == "VERDICT: PASS"
+        err = capsys.readouterr().err
+        assert "hit=None" in err
+        assert "miss=None" in err

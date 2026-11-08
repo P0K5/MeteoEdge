@@ -629,9 +629,22 @@ def build_review_packet(
     diff_max_chars: int = None,
     related_prs: dict = None,
 ) -> str:
+    """Assemble the per-PR user message for the DeepSeek call.
+
+    Section ORDER (#1512): DeepSeek's prompt-caching matches an identical
+    byte prefix across requests. `## Policy Summary` is the only fully
+    STABLE section (it only changes when CLAUDE.md/agents/*.md change), so
+    it is placed FIRST so consecutive review calls share a cacheable
+    prefix, with all PR-variable sections (Diff, Graphify Context, PR
+    Metadata, Description, Changed Files, Linked Issues) following it.
+    Before this fix, PR-specific content was first and the stable summary
+    was last, so almost no prefix match -- and therefore almost no cache
+    hit -- was possible between calls. Each section below is built as its
+    own list of lines (content and formatting unchanged from before this
+    reorder) and only the final concatenation order changed.
+    """
     if diff_max_chars is None:
         diff_max_chars = get_diff_max_chars()
-    # PR Metadata
     pr_number = pr_meta.get("number", "?")
     pr_title = pr_meta.get("title", "")
     author = pr_meta.get("user", {}).get("login", "unknown")
@@ -653,7 +666,8 @@ def build_review_packet(
     closing_txt = ", ".join(f"#{n}" for n in closing_nums) if closing_nums else "(none)"
     reference_txt = ", ".join(f"#{n}" for n in reference_nums) if reference_nums else "(none)"
 
-    packet_parts = [
+    # --- PR Metadata -------------------------------------------------
+    metadata_section = [
         "## PR Metadata",
         f"- PR #{pr_number}: {pr_title}",
         f"- Author: {author}",
@@ -669,16 +683,17 @@ def build_review_packet(
         "satisfied the issue-linking requirement. Do not treat an empty "
         "closing-keywords list as 'no linked issue' when the references "
         "list is non-empty.",
-        "",
-        "## PR Description",
     ]
+
+    # --- PR Description -----------------------------------------------
+    description_section = ["## PR Description"]
     # The PR body itself — previously discarded after regexing closing
     # keywords out of it, so the model never saw a word of the description
     # (#1243). An empty body is a genuine policy violation (governance rule
     # 2: every PR description must state what/why/how-to-test) and is
     # called out explicitly rather than left as a blank section.
     if not pr_body.strip():
-        packet_parts.append(
+        description_section.append(
             "(PR body is empty — this is a policy violation: PR descriptions "
             "must state what changed, why, and how to test, per governance "
             "rule 2. This is a legitimate basis to flag Acceptance criteria "
@@ -686,43 +701,47 @@ def build_review_packet(
         )
     else:
         pr_body_text, pr_body_truncated = _budget(pr_body, PR_BODY_MAX_CHARS)
-        packet_parts.append(pr_body_text)
+        description_section.append(pr_body_text)
         if pr_body_truncated:
-            packet_parts.append(
+            description_section.append(
                 f"\n[... PR body truncated to {PR_BODY_MAX_CHARS} characters "
                 "for the model's context budget. Content beyond this point "
                 "was NOT shown to the reviewer — treat any criteria you "
                 "cannot verify from this excerpt as unverifiable, not failed.]"
             )
-    packet_parts += ["", "## Changed Files"]
+
+    # --- Changed Files --------------------------------------------------
+    changed_files_section = ["## Changed Files"]
     for f in changed_files:
         fname = f.get("filename", "?")
         status = f.get("status", "")
         additions = f.get("additions", 0)
         deletions = f.get("deletions", 0)
         suffix = " (generated, diff omitted)" if is_generated_path(fname) else ""
-        packet_parts.append(f"- {fname} [{status}] +{additions}/-{deletions}{suffix}")
+        changed_files_section.append(f"- {fname} [{status}] +{additions}/-{deletions}{suffix}")
 
-    # Diff — built from each file's own patch hunk, excluding generated
-    # paths, then capped at diff_max_chars (default DIFF_MAX_CHARS, env
-    # override AI_REVIEW_DIFF_MAX_CHARS) as a safety net (#1118, #1283).
+    # --- Diff -------------------------------------------------------------
+    # Built from each file's own patch hunk, excluding generated paths, then
+    # capped at diff_max_chars (default DIFF_MAX_CHARS, env override
+    # AI_REVIEW_DIFF_MAX_CHARS) as a safety net (#1118, #1283).
     diff = build_diff_from_files(changed_files)
     truncated_diff = diff if len(diff) <= diff_max_chars else diff[:diff_max_chars] + "\n... (diff truncated)"
-    packet_parts += [
-        "",
+    diff_section = [
         "## Diff",
         "```diff",
         truncated_diff,
         "```",
-        "",
+    ]
+
+    graphify_section = [
         "## Graphify Context",
         build_graphify_context(graph, changed_files),
     ]
 
-    # Linked issues
-    packet_parts += ["", "## Linked Issues"]
+    # --- Linked Issues ------------------------------------------------
+    linked_issues_section = ["## Linked Issues"]
     if not all_linked_nums:
-        packet_parts.append(
+        linked_issues_section.append(
             "(no closing keywords or non-closing references in PR body — a "
             "genuine candidate for a policy violation, but judge from the PR "
             "Description above: a PR that is itself design input with no "
@@ -740,7 +759,7 @@ def build_review_packet(
         missing_nums = [n for n in all_linked_nums if n not in fetched_nums]
         if missing_nums:
             missing_txt = ", ".join(f"#{n}" for n in missing_nums)
-            packet_parts.append(
+            linked_issues_section.append(
                 f"(issue(s) {missing_txt} unavailable — access restricted or "
                 "fetch failed; linkage already confirmed in PR Metadata above. "
                 "Do not block on acceptance criteria you cannot see for these "
@@ -779,7 +798,7 @@ def build_review_packet(
             (related_prs or {}).get(issue_num)
         )
 
-        packet_parts += [
+        linked_issues_section += [
             f"### Issue #{issue_num} ({linkage_type}): {issue_title}",
             f"Body:\n{body_block}",
             f"Acceptance Criteria:\n{ac_text}",
@@ -787,7 +806,23 @@ def build_review_packet(
             f"not proof a criterion is met):\n{related_block}",
             "",
         ]
-    packet_parts += ["", "## Policy Summary", policy_summary]
+
+    policy_section = ["## Policy Summary", policy_summary]
+
+    # --- Assemble: stable content first, PR-variable content after (#1512) --
+    packet_parts: list = []
+    for section in (
+        policy_section,
+        diff_section,
+        graphify_section,
+        metadata_section,
+        description_section,
+        changed_files_section,
+        linked_issues_section,
+    ):
+        if packet_parts:
+            packet_parts.append("")
+        packet_parts += section
 
     return "\n".join(packet_parts)
 
@@ -795,6 +830,24 @@ def build_review_packet(
 # ---------------------------------------------------------------------------
 # DeepSeek call
 # ---------------------------------------------------------------------------
+
+# DeepSeek's chat-completions response `usage` object reports context-cache
+# performance via `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`
+# (see https://api-docs.deepseek.com/guides/kv_cache -- confirmed current as
+# of this change, #1512). Logged so cache effectiveness is visible in CI
+# output instead of only in the DeepSeek account dashboard. Both fields are
+# read with .get() since a response that omits `usage` entirely (e.g. a
+# mocked/non-DeepSeek-shaped payload in tests) must not raise.
+def _log_cache_usage(data: dict) -> None:
+    usage = data.get("usage") or {}
+    hit = usage.get("prompt_cache_hit_tokens")
+    miss = usage.get("prompt_cache_miss_tokens")
+    print(
+        f"[ai_reviewer] DeepSeek prompt cache usage — hit={hit} miss={miss} "
+        f"prompt_tokens={usage.get('prompt_tokens')}",
+        file=sys.stderr,
+    )
+
 
 def call_deepseek(
     base_url: str,
@@ -838,6 +891,7 @@ def call_deepseek(
 
         if resp.ok:
             data = resp.json()
+            _log_cache_usage(data)
             return data["choices"][0]["message"]["content"]
 
         body = resp.text[:2000]
