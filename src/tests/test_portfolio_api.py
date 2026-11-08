@@ -321,9 +321,12 @@ class TestPositionsFromWalletConcurrency:
                 return self._data
 
         def _fake_get(url, timeout=None):
-            if "offset=0" in url:
-                return _FakeResp(rows)
-            return _FakeResp([])
+            # v2 envelope (issue #1513): first page has no "cursor=" param;
+            # a single page of data is enough for these tests, so
+            # next_cursor is always null.
+            if "cursor=" not in url:
+                return _FakeResp({"data": rows, "pagination": {"next_cursor": None}})
+            return _FakeResp({"data": [], "pagination": {"next_cursor": None}})
 
         return _fake_get
 
@@ -333,9 +336,9 @@ class TestPositionsFromWalletConcurrency:
         monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", "0x" + "1" * 40)
 
         wallet_row = {
-            "asset": "tok1",
-            "size": 10,
-            "avgPrice": 0.5,
+            "token_id": "tok1",
+            "current_size": 10,
+            "avg_price": 0.5,
             "outcome": "YES",
             "title": "Will the high temperature in Chicago be above 80F?",
             "redeemable": False,
@@ -386,9 +389,12 @@ class TestPositionsFromWalletCopyTradeSettlement:
                 return self._data
 
         def _fake_get(url, timeout=None):
-            if "offset=0" in url:
-                return _FakeResp(rows)
-            return _FakeResp([])
+            # v2 envelope (issue #1513): first page has no "cursor=" param;
+            # a single page of data is enough for these tests, so
+            # next_cursor is always null.
+            if "cursor=" not in url:
+                return _FakeResp({"data": rows, "pagination": {"next_cursor": None}})
+            return _FakeResp({"data": [], "pagination": {"next_cursor": None}})
 
         return _fake_get
 
@@ -410,9 +416,9 @@ class TestPositionsFromWalletCopyTradeSettlement:
         monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", "0x" + "3" * 40)
 
         wallet_row = {
-            "asset": "tok-copy-win",
-            "size": 100.0,
-            "avgPrice": 0.05,
+            "token_id": "tok-copy-win",
+            "current_size": 100.0,
+            "avg_price": 0.05,
             "outcome": "NO",
             "title": "Will the high temperature in Chicago be above 80F?",
             "redeemable": True,
@@ -449,9 +455,9 @@ class TestPositionsFromWalletCopyTradeSettlement:
         monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", "0x" + "4" * 40)
 
         wallet_row = {
-            "asset": "tok-copy-loss",
-            "size": 50.0,
-            "avgPrice": 0.10,
+            "token_id": "tok-copy-loss",
+            "current_size": 50.0,
+            "avg_price": 0.10,
             "outcome": "YES",
             "title": "Will the high temperature in Atlanta be above 90F?",
             "redeemable": True,
@@ -487,9 +493,9 @@ class TestPositionsFromWalletCopyTradeSettlement:
         monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", "0x" + "5" * 40)
 
         wallet_row = {
-            "asset": "tok-manual",
-            "size": 20.0,
-            "avgPrice": 0.5,
+            "token_id": "tok-manual",
+            "current_size": 20.0,
+            "avg_price": 0.5,
             "outcome": "YES",
             "title": "Will the high temperature in Miami be above 95F?",
             "redeemable": True,
@@ -510,6 +516,159 @@ class TestPositionsFromWalletCopyTradeSettlement:
         pos = closed_pos[0]
         assert pos.exit_reason == "won"
         assert pos.pnl == pytest.approx(20.0 * 1.0 - 10.0)
+
+
+# ---------------------------------------------------------------------------
+# _positions_from_wallet() — issue #1513: v2 /positions migration +
+# cursor-based pagination (PM-amended 2026-11-08: follow next_cursor rather
+# than drop pagination, with a hard safety cap).
+# ---------------------------------------------------------------------------
+
+class TestPositionsFromWalletV2Pagination:
+    @staticmethod
+    def _closed_row(token_id):
+        return {
+            "token_id": token_id,
+            "current_size": 10.0,
+            "avg_price": 0.5,
+            "outcome": "YES",
+            "title": "Will the high temperature in a city be above 80F?",
+            "redeemable": True,
+            "conditionId": f"0xcond-{token_id}",
+            "curPrice": 1.0,
+            "initialValue": 5.0,
+            "endDate": "2026-10-01T00:00:00Z",
+        }
+
+    @staticmethod
+    def _fake_resp(payload):
+        class _FakeResp:
+            def __init__(self, data):
+                self._data = data
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return self._data
+
+        return _FakeResp(payload)
+
+    def test_follows_next_cursor_across_multiple_pages(self, monkeypatch):
+        """Two pages of data, linked by pagination.next_cursor, must both be
+        reflected in the result (using redeemable rows with no DB/JSONL/
+        copy-trade match so each lands in closed_positions via the
+        curPrice fallback, keeping this test independent of the CLOB
+        midpoints/NWS code paths)."""
+        from src.dashboard import api
+
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", "0x" + "6" * 40)
+
+        page1 = {"data": [self._closed_row("tok-page1")], "pagination": {"next_cursor": "cursor-2"}}
+        page2 = {"data": [self._closed_row("tok-page2")], "pagination": {"next_cursor": None}}
+        calls = []
+
+        def _fake_get(url, timeout=None):
+            calls.append(url)
+            if "cursor=" not in url:
+                return self._fake_resp(page1)
+            assert "cursor=cursor-2" in url
+            return self._fake_resp(page2)
+
+        mock_db = MagicMock()
+        mock_db.get_open_positions.return_value = []
+        mock_db.get_settled_live_trades.return_value = []
+        mock_db.get_copy_live_positions.return_value = []
+
+        with patch.object(api, "_db", mock_db), \
+             patch.object(api, "httpx") as mock_httpx:
+            mock_httpx.get.side_effect = _fake_get
+            _open_pos, closed_pos = api._positions_from_wallet(client=MagicMock())
+
+        assert len(calls) == 2
+        token_ids = {pos.token_id for pos in closed_pos}
+        assert token_ids == {"tok-page1", "tok-page2"}
+
+    def test_malformed_data_field_raises(self, monkeypatch):
+        """A non-list 'data' field is a malformed v2 envelope -- raise so the
+        caller (portfolio()'s existing try/except) degrades the same way as
+        any other wallet-fetch failure, never silently treated as an empty
+        wallet."""
+        from src.dashboard import api
+
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", "0x" + "7" * 40)
+
+        with patch.object(api, "httpx") as mock_httpx:
+            mock_httpx.get.return_value = self._fake_resp({"data": "not-a-list"})
+            with pytest.raises(ValueError):
+                api._positions_from_wallet(client=MagicMock())
+
+    def test_non_advancing_cursor_stops_pagination_and_logs_warning(self, monkeypatch, caplog):
+        """A cursor that doesn't change between pages (malformed/buggy API
+        response) must stop pagination defensively instead of looping
+        forever, and log a warning so it's visible in monitoring."""
+        import logging
+        from src.dashboard import api
+
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", "0x" + "8" * 40)
+
+        stuck_page = {"data": [self._closed_row("tok-stuck")], "pagination": {"next_cursor": "same-cursor"}}
+        calls = []
+
+        def _fake_get(url, timeout=None):
+            calls.append(url)
+            if "cursor=" not in url:
+                return self._fake_resp(stuck_page)
+            return self._fake_resp(stuck_page)
+
+        mock_db = MagicMock()
+        mock_db.get_open_positions.return_value = []
+        mock_db.get_settled_live_trades.return_value = []
+        mock_db.get_copy_live_positions.return_value = []
+
+        with patch.object(api, "_db", mock_db), \
+             patch.object(api, "httpx") as mock_httpx, \
+             caplog.at_level(logging.WARNING, logger="src.dashboard.api"):
+            mock_httpx.get.side_effect = _fake_get
+            api._positions_from_wallet(client=MagicMock())
+
+        # First page has cursor=None, second page returns the same cursor
+        # again -- pagination must stop right there, not loop further.
+        assert len(calls) == 2
+        assert any("non-advancing cursor" in r.message for r in caplog.records)
+
+    def test_safety_cap_stops_after_max_pages_and_logs_warning(self, monkeypatch, caplog):
+        """A cursor that keeps advancing forever (e.g. an API bug) must be
+        bounded by the hard iteration cap, not loop forever."""
+        import logging
+        from src.dashboard import api
+
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", "0x" + "9" * 40)
+
+        call_count = {"n": 0}
+
+        def _fake_get(url, timeout=None):
+            n = call_count["n"]
+            call_count["n"] += 1
+            # Always advances to a new cursor value -- never terminates on
+            # its own, only the safety cap should stop it.
+            return self._fake_resp(
+                {"data": [self._closed_row(f"tok-{n}")], "pagination": {"next_cursor": f"cursor-{n + 1}"}}
+            )
+
+        mock_db = MagicMock()
+        mock_db.get_open_positions.return_value = []
+        mock_db.get_settled_live_trades.return_value = []
+        mock_db.get_copy_live_positions.return_value = []
+
+        with patch.object(api, "_db", mock_db), \
+             patch.object(api, "httpx") as mock_httpx, \
+             caplog.at_level(logging.WARNING, logger="src.dashboard.api"):
+            mock_httpx.get.side_effect = _fake_get
+            api._positions_from_wallet(client=MagicMock())
+
+        assert call_count["n"] == api._POSITIONS_FROM_WALLET_MAX_PAGES
+        assert any("pagination safety cap" in r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------
@@ -860,9 +1019,9 @@ class TestNwsForecastProcessCache:
         monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", "0x" + "2" * 40)
 
         wallet_row = {
-            "asset": "tok-nws-reuse",
-            "size": 10,
-            "avgPrice": 0.5,
+            "token_id": "tok-nws-reuse",
+            "current_size": 10,
+            "avg_price": 0.5,
             "outcome": "YES",
             "title": "Will the high temperature in Chicago be above 80F?",
             "redeemable": False,
@@ -881,9 +1040,12 @@ class TestNwsForecastProcessCache:
                 return self._data
 
         def _fake_get(url, timeout=None):
-            if "offset=0" in url:
-                return _FakeResp([wallet_row])
-            return _FakeResp([])
+            # v2 envelope (issue #1513): first page has no "cursor=" param;
+            # a single page of data is enough for these tests, so
+            # next_cursor is always null.
+            if "cursor=" not in url:
+                return _FakeResp({"data": [wallet_row], "pagination": {"next_cursor": None}})
+            return _FakeResp({"data": [], "pagination": {"next_cursor": None}})
 
         fetch_mock = MagicMock(return_value=82.0)
 

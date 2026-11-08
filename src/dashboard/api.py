@@ -1128,6 +1128,9 @@ def _cash_usdc(client=None) -> float:
         return 0.0
 
 
+_POSITIONS_FROM_WALLET_MAX_PAGES = 20
+
+
 def _positions_from_wallet(client=None) -> tuple[list[PositionOut], list[ClosedPositionOut]]:
     """Fetch positions directly from Polymarket Data API by wallet address.
 
@@ -1135,24 +1138,56 @@ def _positions_from_wallet(client=None) -> tuple[list[PositionOut], list[ClosedP
     already built one for this request — e.g. ``portfolio()`` — don't pay for
     a second ``get_clob_client()`` construction. Falls back to building its
     own when called standalone (unchanged behavior for other callers/tests).
+
+    Issue #1513: migrated off the retired Data API v1 ``/positions`` endpoint
+    to v2 (v1 retired 2026-11-02, returned 410 Gone; same root cause as
+    #1510/#1511's order_manager.py call sites). v2 wraps results in a
+    ``{"data": [...], "pagination": {"next_cursor": ..., ...}}`` envelope and
+    renames fields (``asset`` -> ``token_id``, ``size`` -> ``current_size``,
+    ``avgPrice`` -> ``avg_price``). Unlike #1511's reconciliation call sites
+    (bounded by MAX_OPEN_POSITIONS, pagination dropped), this is the
+    operator-facing dashboard's own view of its wallet, so pagination is
+    followed via ``pagination.next_cursor`` rather than dropped (PM decision,
+    issue #1513). A malformed/unexpected envelope (not a dict, or ``"data"``
+    not a list) raises here -- caught by portfolio()'s existing try/except
+    around this call, same "skip this request's wallet fetch" degradation as
+    any other wallet-fetch failure (network error, timeout, etc.).
     """
     wallet = os.environ.get("POLYMARKET_DEPOSIT_WALLET", "")
     if not wallet:
         raise RuntimeError("POLYMARKET_DEPOSIT_WALLET not set")
 
-    base_url = f"https://data-api.polymarket.com/positions?user={wallet}&sizeThreshold=0.01&limit=100"
+    base_url = (
+        "https://data-api.polymarket.com/v2/positions"
+        f"?user={wallet}&filter_type=TOKENS&filter_amount=0.01&limit=100&status=OPEN"
+    )
     rows: list = []
-    offset = 0
-    while True:
-        r = httpx.get(f"{base_url}&offset={offset}", timeout=15)
+    cursor: str | None = None
+    for _page_num in range(_POSITIONS_FROM_WALLET_MAX_PAGES):
+        url = f"{base_url}&cursor={cursor}" if cursor else base_url
+        r = httpx.get(url, timeout=15)
         r.raise_for_status()
-        page = r.json()
+        envelope = r.json()
+        page = envelope["data"]
         if not isinstance(page, list):
-            page = page.get("positions") or page.get("data") or []
+            raise ValueError(f"unexpected 'data' type in v2 /positions response: {type(page)}")
         rows.extend(page)
-        if len(page) < 100:
+        next_cursor = (envelope.get("pagination") or {}).get("next_cursor")
+        if not next_cursor:
             break
-        offset += 100
+        if next_cursor == cursor:
+            logger.warning(
+                "[_positions_from_wallet] non-advancing cursor %r from v2 /positions "
+                "-- stopping pagination defensively", next_cursor,
+            )
+            break
+        cursor = next_cursor
+    else:
+        logger.warning(
+            "[_positions_from_wallet] hit the %d-page pagination safety cap for wallet "
+            "%s -- stopping; some positions may be missing from this response",
+            _POSITIONS_FROM_WALLET_MAX_PAGES, wallet,
+        )
 
     enrichment = _db_open_positions_enrichment()
     # Issue #814: closed positions (history) are computed by a dedicated
@@ -1194,12 +1229,12 @@ def _positions_from_wallet(client=None) -> tuple[list[PositionOut], list[ClosedP
         from src.execution.auth import get_clob_client
         client = get_clob_client()
     active_token_ids = [
-        str(row.get("asset") or "")
+        str(row.get("token_id") or "")
         for row in rows
-        if not row.get("redeemable") and row.get("asset")
+        if not row.get("redeemable") and row.get("token_id")
     ]
     avg_prices = {
-        str(row.get("asset") or ""): float(row.get("avgPrice") or 0)
+        str(row.get("token_id") or ""): float(row.get("avg_price") or 0)
         for row in rows
     }
     fallbacks = {t: max(1, min(99, round(avg_prices.get(t, 0) * 100))) for t in active_token_ids}
@@ -1258,14 +1293,14 @@ def _positions_from_wallet(client=None) -> tuple[list[PositionOut], list[ClosedP
     # db_settled_condition_ids, since trades.ticker stores the same 0x
     # condition ID the wallet API reports as `conditionId` for a position.
     for row in rows:
-        token_id = str(row.get("asset") or "")
+        token_id = str(row.get("token_id") or "")
         if not token_id:
             continue
-        shares = float(row.get("size") or 0)
+        shares = float(row.get("current_size") or 0)
         if shares < 0.01:
             continue
 
-        avg_price = float(row.get("avgPrice") or 0)
+        avg_price = float(row.get("avg_price") or 0)
         avg_entry_cents = max(1, min(99, round(avg_price * 100))) if avg_price else 50
         side: Literal["YES", "NO"] = "YES" if str(row.get("outcome") or "").upper() == "YES" else "NO"
         question = str(row.get("title") or "")
