@@ -243,22 +243,34 @@ def _wallet_held_token_ids() -> set:
 
     Used to reconcile timeout records against actual exchange state -- if a
     token is in the wallet, the order filled despite our local timeout marker.
+
+    Issue #1510: migrated off the retired Data API v1 ``/positions`` endpoint
+    to v2 (v1 retired 2026-11-02, returned 410 Gone). v2 wraps results in a
+    ``{"data": [...], "pagination": {...}}`` envelope and renames fields
+    (``asset`` -> ``token_id``). A malformed/unexpected envelope (not a dict,
+    or no list ``"data"``) raises here and is caught below -- same
+    "skip reconciliation" degradation as any other wallet-fetch failure,
+    never silently treated as "wallet is empty".
     """
     wallet = os.environ.get("POLYMARKET_DEPOSIT_WALLET", "")
     if not wallet:
         return set()
     try:
         import httpx
-        url = f"https://data-api.polymarket.com/positions?user={wallet}&sizeThreshold=0.01&limit=100"
+        url = (
+            "https://data-api.polymarket.com/v2/positions"
+            f"?user={wallet}&filter_type=TOKENS&filter_amount=0.01&limit=100&status=OPEN"
+        )
         r = httpx.get(url, timeout=15)
         r.raise_for_status()
         rows = r.json()
-        if not isinstance(rows, list):
-            rows = rows.get("positions") or rows.get("data") or []
+        data = rows["data"]
+        if not isinstance(data, list):
+            raise ValueError(f"unexpected 'data' type in v2 /positions response: {type(data)}")
         return {
-            str(row.get("asset") or "")
-            for row in rows
-            if row.get("asset") and not row.get("redeemable")
+            str(row.get("token_id") or "")
+            for row in data
+            if row.get("token_id") and not row.get("redeemable")
         }
     except Exception as e:
         log.warning("[reconcile] wallet fetch failed: %s -- skipping reconciliation", e)
@@ -270,32 +282,43 @@ def _wallet_held_positions() -> list:
 
     Each entry is a dict with at least:
       - ``asset_id``: the token_id string
-      - ``size``: float number of shares held (from Polymarket API ``size`` field)
-      - ``avg_price``: float price in [0, 1] (from Polymarket API ``avgPrice`` field)
+      - ``size``: float number of shares held (from Polymarket v2 API
+        ``current_size`` field -- current holding, not ``total_size``, which
+        is lifetime purchased)
+      - ``avg_price``: float price in [0, 1] (from Polymarket v2 API
+        ``avg_price`` field)
 
     Returns an empty list when the wallet env-var is unset or the API call fails.
     This is used by reconcile_wallet_to_db() to get authoritative share/price data.
+
+    Issue #1510: migrated off the retired Data API v1 ``/positions`` endpoint
+    to v2 (v1 retired 2026-11-02, returned 410 Gone). See
+    ``_wallet_held_token_ids`` above for the envelope/field-name notes.
     """
     wallet = os.environ.get("POLYMARKET_DEPOSIT_WALLET", "")
     if not wallet:
         return []
     try:
         import httpx
-        url = f"https://data-api.polymarket.com/positions?user={wallet}&sizeThreshold=0.01&limit=100"
+        url = (
+            "https://data-api.polymarket.com/v2/positions"
+            f"?user={wallet}&filter_type=TOKENS&filter_amount=0.01&limit=100&status=OPEN"
+        )
         r = httpx.get(url, timeout=15)
         r.raise_for_status()
         rows = r.json()
-        if not isinstance(rows, list):
-            rows = rows.get("positions") or rows.get("data") or []
+        data = rows["data"]
+        if not isinstance(data, list):
+            raise ValueError(f"unexpected 'data' type in v2 /positions response: {type(data)}")
         result = []
-        for row in rows:
-            asset = str(row.get("asset") or "")
+        for row in data:
+            asset = str(row.get("token_id") or "")
             if not asset or row.get("redeemable"):
                 continue
             result.append({
                 "asset_id": asset,
-                "size": float(row.get("size") or 0.0),
-                "avg_price": float(row.get("avgPrice") or 0.0),
+                "size": float(row.get("current_size") or 0.0),
+                "avg_price": float(row.get("avg_price") or 0.0),
             })
         return result
     except Exception as e:
