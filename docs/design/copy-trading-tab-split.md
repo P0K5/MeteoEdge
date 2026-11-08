@@ -1,5 +1,10 @@
 # Design Spec — Copy-Trading Tab Split (Wallets / Paper / Live)
 
+> **DISCONTINUED (2026-11, issue #1502).** The copy-trading program was wound
+> down (#1501: services stopped/disabled; #1502: the Copy-Trading dashboard
+> tab and all code described here removed). Kept for historical/design-
+> rationale reference only.
+
 Re-arrangement of the existing single `#tab-copy-trading` panel into three
 tabs. **No new design language**: every component below already exists in
 `src/dashboard/static/index.html` (`.wallet-card`, `.copy-table`,

@@ -10,13 +10,14 @@ Covered:
 * `_ensureChartJs` injects ONE version-pinned script, resolves
   once it loads, and `Chart` is then defined;
 * a load error clears the memoised promise, so a retry injects a fresh script
-  and succeeds;
-* the stale-token guard in the copy chart renderers: two renders requested
-  while Chart.js is still loading produce ONE chart (the newest payload), not
-  two;
-* when Chart.js is already loaded the renderer stays synchronous.
+  and succeeds.
 
 Skipped when node is not installed (repo convention).
+
+Issue #1502 (2026-11): the copy-trading-specific stale-token-guard and
+synchronous-renderer tests that used to live here (against the now-removed
+`_renderCopyLivePositionsChart`) were deleted along with that function --
+`_ensureChartJs` itself is the shared piece and is still covered above.
 """
 from __future__ import annotations
 
@@ -62,11 +63,9 @@ _PRELUDE = textwrap.dedent(r"""
     console.error = () => {};
     console.warn = () => {};
     // Chart is deliberately NOT defined: tests install it when "the CDN script loads".
-    const created = [];                        // data of every chart constructed
     const installChart = () => {
-      global.Chart = function (canvas, cfg) { created.push(cfg.data); this.destroy = () => {}; };
+      global.Chart = function (canvas, cfg) { this.destroy = () => {}; };
     };
-    const tick = () => new Promise(r => setImmediate(r));
 """)
 
 
@@ -126,28 +125,4 @@ def test_load_error_clears_memo_and_retry_succeeds(tmp_path):
         appended[1].onload();
         await second;
         assert.strictEqual(typeof Chart, 'function');
-    """, tmp_path)
-
-
-def test_stale_token_guard_prevents_double_render(tmp_path):
-    _run("""
-        const pts = (n) => [{ day: '2026-09-01', cumulative: n }];
-        _renderCopyLivePositionsChart(pts(1));    // Chart.js not loaded yet -> starts load
-        _renderCopyLivePositionsChart(pts(2));    // newer request supersedes the first
-        assert.strictEqual(created.length, 0, 'nothing drawn before the script loads');
-        assert.strictEqual(appended.length, 1, 'still a single script injection');
-        installChart();
-        appended[0].onload();
-        await tick();
-        assert.strictEqual(created.length, 1, 'exactly one chart drawn, not two');
-        assert.strictEqual(created[0].datasets[0].data[0], 2, 'the newest payload wins');
-    """, tmp_path)
-
-
-def test_renderer_is_synchronous_once_chartjs_is_loaded(tmp_path):
-    _run("""
-        installChart();
-        _renderCopyLivePositionsChart([{ day: '2026-09-01', cumulative: 3 }]);
-        assert.strictEqual(created.length, 1, 'drawn synchronously, no extra await tick');
-        assert.strictEqual(appended.length, 0);
     """, tmp_path)

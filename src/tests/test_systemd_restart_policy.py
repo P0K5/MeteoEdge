@@ -20,7 +20,6 @@ DEPLOY_DIR = Path(__file__).resolve().parents[2] / "deploy" / "systemd"
 # Intentionally persistent daemons; adding a unit here is a deliberate review.
 PERSISTENT_UNITS = {
     "meteoedge.service",
-    "meteoedge-copy-signals.service",
     "cryptoedge.service",
 }
 RESTART_ON_SUCCESS = {"always", "on-success"}

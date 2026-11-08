@@ -110,7 +110,7 @@ def test_tab_bar_scrolls_horizontally_and_keeps_active_tab_visible():
     body = _rule(html, ".tab-bar")
     assert "overflow-x:auto" in body
     assert re.search(
-        r"event\.target\.scrollIntoView\(_copyScrollOpts\(\{behavior:'smooth', "
+        r"event\.target\.scrollIntoView\(_scrollOpts\(\{behavior:'smooth', "
         r"inline:'nearest', block:'nearest'\}\)\)",
         html,
     ), "switchTab() must keep scrolling the clicked tab into view"

@@ -260,7 +260,6 @@ class TestSharedConnectionMixedReadWrite:
         import time
 
         db = Database(tmp_path / "shared_conn_stress.db")
-        db.insert_followed_wallet(address="0xseed", stake_per_trade=1.0, added_at="2024-01-01T00:00:00+00:00")
         db.set_emos_effective_mode("chicago", "shadow")
 
         errors: list = []
@@ -280,8 +279,8 @@ class TestSharedConnectionMixedReadWrite:
 
         def reader(idx: int) -> None:
             reads = (
-                lambda: db.get_open_copy_live_positions(),
-                lambda: db.get_followed_wallets(),
+                lambda: db.get_copy_live_positions(),
+                lambda: db.get_station_override("KORD"),
                 lambda: db.get_emos_effective_mode("chicago"),
                 lambda: db.get_obs_highs_range("KORD", "2024-01-01"),
                 lambda: db.get_trades(limit=10),
@@ -310,11 +309,7 @@ class TestSharedConnectionMixedReadWrite:
                         unit="F",
                         source="metar",
                     )
-                    address = f"0x{idx:02d}{i:06d}"
-                    db.insert_followed_wallet(
-                        address=address, stake_per_trade=1.0, added_at="2024-01-01T00:00:00+00:00"
-                    )
-                    db.update_followed_wallet_last_seen(address, i)
+                    db.set_config(f"STRESS_TEST_KEY_{idx}", str(i))
                     db.set_emos_effective_mode("chicago", "shadow" if i % 2 else "live")
                     db.insert_trade(**_base_trade_kwargs(idx * 100_000 + i))
                     bump("writes")

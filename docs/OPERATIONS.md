@@ -2,6 +2,16 @@
 
 This document covers deployment, configuration, runtime modes, settlement processes, recovery procedures, and logging for MeteoEdge.
 
+> **Copy-trading sections throughout this document are discontinued (2026-11, issue #1502).**
+> The copy-trading program was wound down (#1501: services stopped/disabled;
+> #1502: application code removed). The operational instructions below for
+> `meteoedge-copy-*` services, `copy_wallet_promotion.py`, the Copy-Trading
+> dashboard tab, and related config keys no longer apply -- those services,
+> scripts, systemd units, and endpoints do not exist in the codebase anymore.
+> Kept in place, not deleted, for historical/forensic reference only. The
+> underlying `copy_*` database tables and their historical data are
+> deliberately retained (operator decision) -- see `docs/DB_SCHEMA.md`.
+
 ## Deployment
 
 ### Prerequisites
