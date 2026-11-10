@@ -1,0 +1,77 @@
+{
+  "run_date": "2026-11-10",
+  "transcripts_analyzed": [
+    "1e535d71-1bc3-468e-8f0d-23af9fe69222.jsonl",
+    "3155048e-ee85-4e9b-9883-0bb2eee31e69.jsonl",
+    "447adf79-5449-4556-be79-6a1048939dfb.jsonl",
+    "5e29fc00-54dd-44cf-b8bf-2163af414f8f.jsonl",
+    "62202c32-1aa1-440c-8de3-146a71048c03.jsonl",
+    "6f21d18b-2241-48ee-b82c-9100048f2813.jsonl",
+    "c9bbcd88-e196-4ff9-aab5-c41cf33ef5cd.jsonl",
+    "e195d81c-22d9-4c38-bda8-3daade25f995.jsonl",
+    "f7f1b22c-af8d-4762-999b-a1071d0da298.jsonl",
+    "fbf0e0d8-95af-47f0-a95e-64c220142747.jsonl"
+  ],
+  "baseline": {
+    "tokens_per_completed_issue": 2093638,
+    "delta_vs_previous": "-44.1% (3744917 -> 2093638, vs the 2026-10-14 'last-10-sessions' row)"
+  },
+  "cost_guard_bypass": "DEEPSEEK_API_KEY was not available in this local environment (reading .env for it was blocked by the sandbox's credential-materialization guard). Per the skill's documented fallback, triage was done directly by Claude instead of the DeepSeek cost-guard pass. Findings below were still held to the same evidence/impact bar.",
+  "proposals": [
+    {
+      "id": "P1",
+      "target_file": ".claude/skills/pr-review/SKILL.md",
+      "category": "redundant-context",
+      "evidence": [
+        {
+          "transcript": "6f21d18b-2241-48ee-b82c-9100048f2813.jsonl",
+          "turns": [3513, 3528, 3611, 3622],
+          "quote": "Exit code 1\\nX Pull request P0K5/MeteoEdge#1515 is not mergeable: the head branch is not up to date with the base branch. ... failed to delete local branch docs/1514-readme-refresh: failed to run git: error: cannot delete branch 'docs/1514-readme-refresh' used by worktree ... (repeats for PR #1516 90 lines later: 'failed to delete local branch mid/1512-ai-reviewer-cache-reorder ... used by worktree')"
+        },
+        {
+          "transcript": "447adf79-5449-4556-be79-6a1048939dfb.jsonl",
+          "turns": [233],
+          "quote": "Exit code 1\\nfailed to delete local branch mid/813-parallelize-portfolio-api: failed to run git: error: cannot delete branch ... used by worktree -- followed by a separate verification call (gh pr view 1446 --json state,mergedAt) just to confirm the squash-merge itself had actually gone through despite the error text"
+        },
+        {
+          "transcript": "c9bbcd88-e196-4ff9-aab5-c41cf33ef5cd.jsonl",
+          "turns": [867, 2412, 2771, 3236, 3842, 4984, 5412, 6533, 6567, 6581],
+          "quote": "same 'used by worktree' failure recurring 17 times across this single session's PR merges"
+        }
+      ],
+      "diff_summary": "Every dev-created PR is built in a dev-workflow-mandated isolated worktree (.claude/worktrees/agent-<branch>/) that stays checked out after the PR opens, so a worktree-owned branch can never be deleted by `git branch -d` while that worktree exists. `gh pr merge --squash --delete-branch` therefore reliably fails its branch-delete step with 'used by worktree' -- 45 occurrences across 5 of the 10 sampled sessions, and 2 of those sessions also chained a 'the head branch is not up to date with the base branch' failure immediately before it (requiring a `gh api -X PUT .../update-branch` call and a re-poll of CI on the new head SHA). Each occurrence currently gets re-diagnosed from scratch: a failed merge call, a separate `gh pr view --json state,mergedAt` just to confirm the squash-merge itself (which did succeed) actually landed despite the misleading top-level error, then -- often in a later, disconnected turn -- a manual `git worktree remove <path> --force` and `git branch -d <branch>`. Add a bullet to section 6 ('Reviewer mechanics and blind spots') naming this as an expected, routine two-step merge sequence for any worktree-built PR rather than a problem to diagnose: (1) if `gh pr merge --squash --delete-branch` errors only on the branch-delete line, the merge already succeeded -- confirm via `gh pr view <N> --json state,mergedAt` only if genuinely unsure, don't treat it as a failure to retry; (2) if the error instead says the head branch is not up to date, run `gh api -X PUT repos/{o}/{r}/pulls/<N>/update-branch`, wait for CI to re-run on the new head SHA (checks re-queue from scratch), then merge again; (3) clean up locally right away with `git worktree remove .claude/worktrees/agent-<branch> --force` followed by `git branch -d <branch>` -- safe once merged, since the worktree's content is already on master.",
+      "expected_impact": "Removes the ~2-3 extra diagnostic tool calls (failed merge, state-confirmation query, later rediscovery of the worktree-lock cause) per worktree-built PR merge. At 45 observed occurrences across the sample, this is one of the highest-frequency repeated patterns found -- essentially every PR merge pays this tax today.",
+      "confidence": "high"
+    },
+    {
+      "id": "P2",
+      "target_file": "agents/pm.md",
+      "category": "redundant-context",
+      "evidence": [
+        {
+          "transcript": "6f21d18b-2241-48ee-b82c-9100048f2813.jsonl",
+          "turns": [3139, 3149, 3164, 3184, 3201, 3217, 3239, 3259, 3368],
+          "quote": "please resume (user message, repeated verbatim 9 times across this span of turns, each time directed at a paused subagent that the PM had not yet proactively resumed)"
+        }
+      ],
+      "diff_summary": "agents/pm.md already documents one subagent-lifecycle edge case verbatim in its 'Behavioural rules' section (the 'Pause/stop/hold off includes work already in flight' paragraph) but has zero guidance for the far more frequent edge case actually observed: a spawned subagent pausing or being hard-terminated by a session rate limit mid-task. Today the PM waits for the user to notice the agent went quiet and type 'please resume' -- which happened 9 times in a row in one incident in the sampled session -- instead of checking agent status itself (ListAgents) and resuming proactively. No file under .claude/agents/ or agents/pm.md mentions rate limits, resume, or respawn at all (grep returned zero matches outside one unrelated example string). Add a paragraph to 'Behavioural rules', in the same style as the existing pause/stop paragraph: on noticing (or being told) a spawned subagent has gone idle, check whether it is a graceful pause (resumable in place via SendMessage to the same agent name/id) or a hard termination from a rate limit (not resumable by name -- respawn a fresh agent pointed at the same worktree path to continue, never re-spawn under the same name, which risks a duplicate running agent). Do this on your own initiative rather than waiting for the user to ask again.",
+      "expected_impact": "Directly targets the 9 redundant user-authored 'please resume' turns observed in one incident (each one a full round trip: user message -> PM re-reads agent state -> SendMessage -> wait). Generalizing this into standing PM behavior should prevent the pattern recurring across future long-running delegation-heavy sessions, which this repo's workflow produces often (every epic spawns multiple long-lived subagents).",
+      "confidence": "high"
+    },
+    {
+      "id": "P3",
+      "target_file": null,
+      "category": "poor-query",
+      "evidence": [
+        {
+          "transcript": "6f21d18b-2241-48ee-b82c-9100048f2813.jsonl, c9bbcd88-e196-4ff9-aab5-c41cf33ef5cd.jsonl, 3155048e-ee85-4e9b-9883-0bb2eee31e69.jsonl",
+          "turns": [],
+          "quote": "'rate_limit_error' / 429s and raw `gh api graphql` board calls both appear dozens of times per session, but on inspection the large majority are either legitimate mutations against already-resolved IDs (correct per CLAUDE.md) or unrelated domain text (API rate-limit handling in trading code, not session rate limits)"
+        }
+      ],
+      "diff_summary": "No change proposed. Investigated as a candidate finding (hand-rolled GraphQL board lookups bypassing bootstrap_session.sh, and raw 429 rate-limit noise) but could not isolate a clean, non-ambiguous pattern distinct from P2 within this run's time budget -- most `gh api graphql` calls found were correct mutations using pre-resolved IDs, not the hand-rolled lookups CLAUDE.md warns against. Flagging as low-confidence/no-action per the skill's guidance rather than proposing a speculative diff.",
+      "expected_impact": "none (no-op entry, recorded for traceability so a future run doesn't re-tread the same dead end without a note)",
+      "confidence": "low"
+    }
+  ]
+}
