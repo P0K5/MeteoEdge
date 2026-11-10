@@ -27,12 +27,29 @@ MeteoEdge trades on Polymarket daily high temperature markets at these airports:
 | KLAX | Los Angeles | °F | METAR, NWS | ✅ Active |
 | KATL | Atlanta | °F | METAR, NWS | ✅ Active |
 | KHOU | Houston | °F | METAR, NWS | ✅ Active |
-| RKSI | Seoul | °C | METAR, AMOS | ✅ Active |
+| RKSI | Seoul | °C | METAR, AMOS | ⚠️ Shadow-only (observe-only) |
 | WMKK | Kuala Lumpur | °C | METAR, NWS | ✅ Active |
 | RKPK | Busan | °C | METAR, AMOS | ✅ Active |
 | ZGSZ | Shenzhen | °C | METAR, NWS | ✅ Active |
 | WSSS | Singapore | °C | METAR, MSS | ✅ Active |
 | MPMG | Panama City | °C | METAR, NWS | ✅ Active |
+
+RKSI is observed and evaluated like any other station, but new live entries are
+suppressed — see `SHADOW_STATIONS` under [Position Management](#position-management)
+for why and how that's controlled.
+
+### Shadow archive (not live-traded)
+
+Beyond the 11 stations above, `SHADOW_STATIONS_ARCHIVE` in `src/config.py`
+(issue #274) holds 16 additional ICAO codes that are evaluated in shadow mode
+only — no live orders — pending case-by-case validation before promotion to
+the table above (the same path WMKK, RKPK, ZGSZ, WSSS, and MPMG took):
+
+- **Europe**: EGLC, LFPB, LIMC, EFHK, EPWA, LTFM, LTAC
+- **Asia/Pacific**: RJTT, RCSS, ZSPD, ZGGG, ZHHH, ZSJN, ZHCC, RPLL
+- **MENA**: LLBG, OEJN
+- **Latin America**: SBGR
+- **Oceania**: NZWN
 
 ## Architecture Overview
 
@@ -307,7 +324,13 @@ All configuration is controlled via environment variables (or defaults in `src/c
 - `STOP_LOSS_MIN_BRACKET_PROXIMITY_F` — Don't fire stop-loss while the running daily high is more than this many °F below bracket_low; prevents firing on intraday model panics when the temp is still well away from the bracket (default: 0.5; set ≤0 to disable)
 - `STOP_LOSS_RESPECT_FORECAST_OVERSHOOT` — When true, suppress stop-loss firing if forecast (NWS or secondary) exceeds bracket_high — NO wins on overshoot, so the dip is a false alarm (default: true)
 - `MIN_FORECAST_BRACKET_MARGIN_F` — Skip NO entries whose bracket is closer than this (°F) to the expected daily high (default: 2.5)
-- `DISABLED_STATIONS` — Comma-separated station codes excluded from new entries (default: RKSI)
+- `SHADOW_STATIONS` — Comma-separated station codes excluded from new *live* entries; observation and shadow evaluation continue normally (default: `RKSI`, shadow-only since issue #201's June 2026 forecast busts). `DISABLED_STATIONS` is kept as a deprecated back-compat alias for the same env var/behavior — set either one, not both.
+- `EXCLUDED_STATIONS` — Comma-separated METAR codes excluded from evaluation **entirely**: no `scan_decisions` rows, no candidates, no shadow or live trades. Stronger than `SHADOW_STATIONS`, which only suppresses live trading while shadow evaluation keeps running (default: empty; issue #1500)
+- `EARLIEST_ENTRY_LOCAL_HOUR` — Earliest same-day entry hour in station-local time; entries before this hour lose money per shadow-result analysis, mostly "certain NO" bets placed before the day's heating develops (default: 6 — currently a no-op since every per-station active-hour start is already ≥6; it can only raise, never lower, a station's effective start; issue #1506)
+
+Both `EXCLUDED_STATIONS` and `EARLIEST_ENTRY_LOCAL_HOUR` are live-config-backed:
+settable from the dashboard Config tab and take effect on the next poll, no
+restart required.
 
 ### Operational
 
@@ -371,9 +394,8 @@ MeteoEdge uses EMOS (Error Model Output Statistics) for ensemble post-processing
 5. **Logs forecasts** at fixed lead times for audit trails and backtest validation
 
 Key environment variables for EMOS:
-- `EMOS_MODE` — `shadow` (observe-only), `promote` (manual approval), `auto` (automatic)
-- `EMOS_SETTLED_DAYS_REQUIRED` — Minimum observation history for readiness (default: 5)
-- `EMOS_PROMOTE_CRPS_THRESHOLD` — CRPS target for automatic promotion
+- `EMOS_DEFAULT_MODE` — `legacy` | `emos_shadow` | `emos_primary` (default: `legacy`). This is only the **fallback** mode, used when no per-city row exists in the `emos_calibration` table — a per-city mode, when present, always takes priority over this fallback.
+- `USE_ENSEMBLE_SIGMA` — Selects which coefficient row (fixed vs. ensemble) a retrain writes to and a live reader keys on (default: `true`). Flipping this in code does **not** retroactively change an already-deployed `bot_config` row; an operator must explicitly set it via dashboard PATCH or `db.set_config` after an `'ensemble'` retrain has produced calibration rows.
 
 For EMOS implementation details, see the EMOS-related source code in `src/model/emos_calibration.py` and `src/scripts/auto_retrain_probability_calibration.py`.
 
@@ -395,18 +417,15 @@ Key test categories:
 
 ## Project Status
 
-**Sprint 1** — Core system and live trading: **Complete**
+The system is live, trading on Polymarket weather markets with EMOS calibration
+in progress.
 
-**Sprint 2** — Monitoring, alerts, and operational hardening: **In Progress**
-
-**Recent validated improvements (June 2026):**
-- **EMOS calibration** — Post-processing regression for ensemble error correction with readiness promotion pipeline
-- **Forecast persistence** — Fixed lead-time archival and per-source ensemble standard deviation logging
-- **TAF integration** — Terminal Aerodrome Forecast disruption detection and confidence checks
-- **Position re-pricer** — Decoupled from scanner active-hours gate for held-position margin capture
-- **Systemd deployment** — Production-ready service and timer units with centralized log rotation
-- **Intraday correction** — Real-time temperature adjustment model with historical climb-rate tables
-- **DEB consensus** — Hourly ensemble weighted averaging from distributed ensemble of binary outcomes
+Weather/EMOS work has continued since the last update:
+- **EMOS per-city rollout** — `emos_shadow`/`emos_primary` modes evaluated and promoted on a per-city basis
+- **EMOS auto-refresh** — Coefficients for promoted cities are now refreshed automatically (issue #1495, PR #1496)
+- **Per-lead EMOS offline evaluation** — Analysis-only evaluation by forecast lead time (issue #1453, PR #1497)
+- **Station exclusion config** — `EXCLUDED_STATIONS` added to fully remove a station from evaluation (issue #1500, PR #1503)
+- **Earliest-entry-hour gating** — `EARLIEST_ENTRY_LOCAL_HOUR` added to suppress unprofitable pre-heating same-day entries (issue #1506, PR #1508)
 
 ## License
 
@@ -414,6 +433,6 @@ Proprietary — Internal use only.
 
 ---
 
-**Last Updated**: 2026-06-26  
+**Last Updated**: 2026-11-08  
 **Status**: Live trading with EMOS calibration in progress  
-**Supported Stations**: 11 (5 US, 6 international)
+**Supported Stations**: 11 (5 US, 6 international; RKSI shadow-only, see station table)

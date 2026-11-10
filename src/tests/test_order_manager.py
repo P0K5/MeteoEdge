@@ -1711,3 +1711,145 @@ class TestReconcileWalletToDbIntegration:
         assert pos["token_id"] == kord_token
         assert pos["shares"] == pytest.approx(14.5)
         assert pos["entry_price"] == 81  # max(1, min(99, round(0.81*100)))
+
+
+# ---------------------------------------------------------------------------
+# _wallet_held_token_ids() / _wallet_held_positions() -- issue #1510: the
+# Data API v1 /positions endpoint was retired (410 Gone, 2026-11-02).
+# These tests exercise the real network-parsing code against the v2
+# envelope shape, rather than patching the functions themselves (as the
+# reconciliation tests above do).
+# ---------------------------------------------------------------------------
+
+class _FakeWalletResp:
+    def __init__(self, payload, status_ok=True):
+        self._payload = payload
+        self._status_ok = status_ok
+
+    def raise_for_status(self):
+        if not self._status_ok:
+            raise RuntimeError("simulated HTTP error")
+
+    def json(self):
+        return self._payload
+
+
+def _v2_envelope(rows):
+    return {"data": rows, "pagination": {"limit": 100, "offset": 0, "has_more": False, "next_cursor": None}}
+
+
+class TestWalletHeldTokenIdsV2Migration:
+    """_wallet_held_token_ids() against the v2 /positions envelope."""
+
+    def test_returns_non_redeemable_token_ids(self, monkeypatch):
+        import src.execution.order_manager as om
+
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", "0x" + "1" * 40)
+        rows = [
+            {"token_id": "tok-open", "current_size": 5.0, "avg_price": 0.42, "redeemable": False},
+            {"token_id": "tok-redeemable", "current_size": 3.0, "avg_price": 0.90, "redeemable": True},
+        ]
+        with patch("httpx.get", return_value=_FakeWalletResp(_v2_envelope(rows))) as mock_get:
+            held = om._wallet_held_token_ids()
+
+        assert held == {"tok-open"}
+        url = mock_get.call_args[0][0]
+        assert "/v2/positions" in url
+        assert "status=OPEN" in url
+        assert "filter_type=TOKENS" in url
+        assert "filter_amount=0.01" in url
+
+    def test_empty_data_list_returns_empty_set(self, monkeypatch):
+        import src.execution.order_manager as om
+
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", "0x" + "1" * 40)
+        with patch("httpx.get", return_value=_FakeWalletResp(_v2_envelope([]))):
+            assert om._wallet_held_token_ids() == set()
+
+    def test_malformed_response_degrades_to_empty_not_crash(self, monkeypatch, caplog):
+        """A response missing the 'data' envelope key (e.g. a schema we don't
+        recognize) must log a warning and skip reconciliation -- same as any
+        other wallet-fetch failure -- never crash and never be silently
+        treated as evidence the wallet is empty without a trace."""
+        import logging
+        import src.execution.order_manager as om
+
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", "0x" + "1" * 40)
+        with patch("httpx.get", return_value=_FakeWalletResp({"unexpected": "shape"})):
+            with caplog.at_level(logging.WARNING):
+                held = om._wallet_held_token_ids()
+
+        assert held == set()
+        assert any("wallet fetch failed" in r.message for r in caplog.records)
+
+    def test_non_list_data_field_degrades_to_empty(self, monkeypatch):
+        import src.execution.order_manager as om
+
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", "0x" + "1" * 40)
+        with patch("httpx.get", return_value=_FakeWalletResp({"data": "not-a-list"})):
+            assert om._wallet_held_token_ids() == set()
+
+    def test_http_error_degrades_to_empty(self, monkeypatch):
+        import src.execution.order_manager as om
+
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", "0x" + "1" * 40)
+        with patch("httpx.get", return_value=_FakeWalletResp({}, status_ok=False)):
+            assert om._wallet_held_token_ids() == set()
+
+    def test_no_wallet_env_var_returns_empty_without_network_call(self, monkeypatch):
+        import src.execution.order_manager as om
+
+        monkeypatch.delenv("POLYMARKET_DEPOSIT_WALLET", raising=False)
+        with patch("httpx.get", side_effect=AssertionError("should not call network")):
+            assert om._wallet_held_token_ids() == set()
+
+
+class TestWalletHeldPositionsV2Migration:
+    """_wallet_held_positions() against the v2 /positions envelope."""
+
+    def test_returns_size_and_price_from_v2_fields(self, monkeypatch):
+        import src.execution.order_manager as om
+
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", "0x" + "1" * 40)
+        rows = [
+            {
+                "token_id": "tok-open",
+                "current_size": 12.5,
+                "total_size": 40.0,  # lifetime purchased -- must NOT be used
+                "avg_price": 0.37,
+                "redeemable": False,
+            },
+        ]
+        with patch("httpx.get", return_value=_FakeWalletResp(_v2_envelope(rows))):
+            positions = om._wallet_held_positions()
+
+        assert positions == [{"asset_id": "tok-open", "size": pytest.approx(12.5), "avg_price": pytest.approx(0.37)}]
+
+    def test_excludes_redeemable_positions(self, monkeypatch):
+        import src.execution.order_manager as om
+
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", "0x" + "1" * 40)
+        rows = [
+            {"token_id": "tok-settled", "current_size": 8.0, "avg_price": 0.95, "redeemable": True},
+        ]
+        with patch("httpx.get", return_value=_FakeWalletResp(_v2_envelope(rows))):
+            assert om._wallet_held_positions() == []
+
+    def test_empty_data_list_returns_empty_list(self, monkeypatch):
+        import src.execution.order_manager as om
+
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", "0x" + "1" * 40)
+        with patch("httpx.get", return_value=_FakeWalletResp(_v2_envelope([]))):
+            assert om._wallet_held_positions() == []
+
+    def test_malformed_response_degrades_to_empty_not_crash(self, monkeypatch, caplog):
+        import logging
+        import src.execution.order_manager as om
+
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", "0x" + "1" * 40)
+        with patch("httpx.get", return_value=_FakeWalletResp([1, 2, 3])):
+            with caplog.at_level(logging.WARNING):
+                positions = om._wallet_held_positions()
+
+        assert positions == []
+        assert any("wallet fetch failed" in r.message for r in caplog.records)
