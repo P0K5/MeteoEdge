@@ -26,9 +26,13 @@ if str(_HERE.parents[1]) not in sys.path:
 from src.scripts.daily_health_report import (
     EMOS_PRIMARY_STALENESS_WARN_DAYS,  # noqa: E402
     HIGH_RAIL_WARN_RATIO,  # noqa: E402
+    ISSUE_1507_FINAL_N,  # noqa: E402
+    ISSUE_1507_FUTILITY_N,  # noqa: E402
+    ISSUE_1507_T0,  # noqa: E402
     M3_CLEAN_DATA_CLOCK_START,  # noqa: E402
     TABLE_LIVENESS_QUIET_OK,  # noqa: E402
     TABLE_LIVENESS_SPECS,  # noqa: E402
+    _build_1507_package_status,
     _build_bot_health,
     _build_connectivity_watchdog,
     _build_emos_progress,
@@ -861,6 +865,7 @@ class TestBuildReport:
             "Guardrails (last 24h)",
             "EMOS Status",
             "Entry-Gate Widening Experiment",
+            "#1507 Package Test Status",
             "Per-Station Breakdown",
             "Verdict",
         ]:
@@ -1948,3 +1953,142 @@ class TestBuildStationBreakdownSameDayOnly:
         text = "\n".join(_build_station_breakdown(db, datetime.now(timezone.utc)))
         assert "BE%" in text
         assert "76.0%" in text
+
+
+# ---------------------------------------------------------------------------
+# #1507 package-test tracking section (issue #1521)
+# ---------------------------------------------------------------------------
+
+#: A ts safely after ISSUE_1507_T0 ("2026-11-10T21:30:41+00:00") -- rows
+#: using this count toward the #1507 population.
+_AFTER_T0 = "2026-11-11T00:00:00+00:00"
+#: A ts before ISSUE_1507_T0 -- rows using this must NOT count, even though
+#: they would count for the (unrelated) #1451-era PARAM_CHANGE_DATE cuts.
+_BEFORE_T0 = "2026-11-01T00:00:00+00:00"
+
+
+class TestBuild1507PackageStatus:
+    def test_no_trades_yet_degrades_without_crash(self):
+        """Only trades before T0 exist -- must read 'no trades yet', not
+        divide by zero or raise."""
+        db = _shadow_trades_db([
+            {"ts": _BEFORE_T0, "is_next_day": 0},
+        ])
+        lines = _build_1507_package_status(db, datetime.now(timezone.utc))
+        text = "\n".join(lines)
+        assert "No #1507 trades yet." in text
+
+    def test_header_shows_t0_date(self):
+        db = _shadow_trades_db([{"ts": _BEFORE_T0, "is_next_day": 0}])
+        text = "\n".join(_build_1507_package_status(db, datetime.now(timezone.utc)))
+        assert "#1507 Package Test Status (since 2026-11-10)" in text
+
+    def test_healthy_small_n_shows_checkpoint_lines_without_marker(self):
+        db = _shadow_trades_db([
+            {"ts": _AFTER_T0, "is_next_day": 0, "outcome": "win", "pnl": 0.24},
+            {"ts": _AFTER_T0, "is_next_day": 0, "outcome": "loss", "pnl": -0.76},
+        ])
+        text = "\n".join(_build_1507_package_status(db, datetime.now(timezone.utc)))
+        assert "n=2/150 toward the futility check, 2/400 toward final" in text
+        assert "[FUTILITY CHECK DUE]" not in text
+
+    def test_n_at_futility_checkpoint_shows_marker(self):
+        rows = [
+            {"ts": _AFTER_T0, "is_next_day": 0, "outcome": "win", "pnl": 0.24}
+            for _ in range(ISSUE_1507_FUTILITY_N)
+        ]
+        text = "\n".join(_build_1507_package_status(_shadow_trades_db(rows),
+                                                      datetime.now(timezone.utc)))
+        assert (f"n={ISSUE_1507_FUTILITY_N}/{ISSUE_1507_FUTILITY_N} toward "
+                "the futility check") in text
+        assert "[FUTILITY CHECK DUE]" in text
+
+    def test_next_day_trades_excluded(self):
+        """#1507's population is same-day only -- a next-day row must not
+        inflate the count."""
+        db = _shadow_trades_db([
+            {"ts": _AFTER_T0, "is_next_day": 0, "outcome": "win", "pnl": 0.24},
+            {"ts": _AFTER_T0, "is_next_day": 1, "outcome": "loss", "pnl": -0.76},
+        ])
+        text = "\n".join(_build_1507_package_status(db, datetime.now(timezone.utc)))
+        assert "n=1/150 toward the futility check, 1/400 toward final" in text
+
+    def test_trades_before_t0_excluded(self):
+        db = _shadow_trades_db([
+            {"ts": _BEFORE_T0, "is_next_day": 0, "outcome": "win", "pnl": 0.24},
+            {"ts": _AFTER_T0, "is_next_day": 0, "outcome": "win", "pnl": 0.06},
+        ])
+        text = "\n".join(_build_1507_package_status(db, datetime.now(timezone.utc)))
+        assert "n=1/150 toward the futility check, 1/400 toward final" in text
+
+    def test_sum_and_average_pnl_both_labeled_and_correct(self):
+        """Hand-computed: two settled trades, +0.24 and +0.06 -> sum
+        +0.30/contract, avg +0.15/contract. Both must be explicitly
+        labeled (#1521 -- the project has been burned by this ambiguity
+        once already)."""
+        db = _shadow_trades_db([
+            {"ts": _AFTER_T0, "is_next_day": 0, "outcome": "win", "pnl": 0.24},
+            {"ts": _AFTER_T0, "is_next_day": 0, "outcome": "win", "pnl": 0.06},
+        ])
+        text = "\n".join(_build_1507_package_status(db, datetime.now(timezone.utc)))
+        overall_block = text.split("Overall:")[1].split("By side:")[0]
+        assert "sum +0.30/contract" in overall_block
+        assert "avg +0.15/contract" in overall_block
+
+    def test_split_by_side(self):
+        db = _shadow_trades_db([
+            {"ts": _AFTER_T0, "is_next_day": 0, "side": "NO",
+             "outcome": "win", "pnl": 0.24},
+            {"ts": _AFTER_T0, "is_next_day": 0, "side": "YES",
+             "outcome": "loss", "pnl": -0.80},
+        ])
+        text = "\n".join(_build_1507_package_status(db, datetime.now(timezone.utc)))
+        side_block = text.split("By side:")[1].split(
+            "emos_primary-promoted (7) vs rest:")[0]
+        assert "NO: 1 trades, 1 settled" in side_block
+        assert "sum +0.24/contract" in side_block
+        assert "YES: 1 trades, 1 settled" in side_block
+        assert "sum -0.80/contract" in side_block
+
+    def test_promoted_vs_rest_split_sums_back_to_overall(self):
+        """KMIA (Miami) is one of the 7 emos_primary-promoted cities; KORD
+        is not. The two groups must partition the overall population
+        exactly (#1521 requirement 10)."""
+        db = _shadow_trades_db([
+            {"ts": _AFTER_T0, "station": "KMIA", "is_next_day": 0,
+             "outcome": "win", "pnl": 0.24},
+            {"ts": _AFTER_T0, "station": "KORD", "is_next_day": 0,
+             "outcome": "win", "pnl": 0.06},
+            {"ts": _AFTER_T0, "station": "KORD", "is_next_day": 0,
+             "outcome": "loss", "pnl": -0.80},
+        ])
+        text = "\n".join(_build_1507_package_status(db, datetime.now(timezone.utc)))
+        promo_block = text.split("emos_primary-promoted (7) vs rest:")[1]
+        assert "Promoted (7): 1 trades, 1 settled" in promo_block
+        assert "sum +0.24/contract" in promo_block
+        assert "Rest: 2 trades, 2 settled" in promo_block
+        assert "sum -0.74/contract" in promo_block
+
+    def test_per_station_breakdown_since_t0_included(self):
+        db = _shadow_trades_db([
+            {"ts": _AFTER_T0, "station": "KORD", "is_next_day": 0,
+             "outcome": "win", "pnl": 0.24},
+        ])
+        text = "\n".join(_build_1507_package_status(db, datetime.now(timezone.utc)))
+        assert ("#1507 Package Test -- Per-Station Breakdown (top 10 by "
+                "trade count, same-day only, since 2026-11-10)") in text
+        station_lines = [ln for ln in text.splitlines() if ln.strip().startswith("KORD")]
+        assert station_lines, "expected KORD row in the #1507 per-station breakdown"
+
+    def test_query_error_falls_back_to_unavailable(self):
+        db = MagicMock()
+        db._conn.execute.side_effect = RuntimeError("boom")
+        text = "\n".join(_build_1507_package_status(db, datetime.now(timezone.utc)))
+        assert "(unavailable -- query error)" in text
+
+    def test_registered_right_after_param_change_in_build_report(self):
+        db = _mock_db()
+        result = build_report(db)
+        assert result.index("Entry-Gate Widening Experiment") < \
+            result.index("#1507 Package Test Status") < \
+            result.index("Per-Station Breakdown")

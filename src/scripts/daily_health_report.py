@@ -1,10 +1,11 @@
 """Daily health report email for MeteoEdge.
 
 Gathers a snapshot of bot health, trading activity, data pipeline status,
-guardrail events, EMOS progress, and the impact of the 2026-10-11 entry-gate
+guardrail events, EMOS progress, the impact of the 2026-10-11 entry-gate
 widening experiment (MAX_CONFIDENCE_YES_FOR_NO 0.05->0.10 + the first
-emos_primary promotions) -- overall and broken down per station -- then
-emails it as a plain-text report via SMTP.
+emos_primary promotions) -- overall and broken down per station -- and
+standing progress tracking for the #1507 pre-registered package test
+(#1521), then emails it as a plain-text report via SMTP.
 
 The M3 remediation-plan metrics and their open-blocker checklist (#885/#897/
 #893) are retired from this report now that the weather-trading thesis is
@@ -83,6 +84,24 @@ EMOS_PRIMARY_PROMOTED_CITIES = (
     "Miami", "Seoul", "Kuala Lumpur", "Singapore",
     "Panama City", "London", "Paris",
 )
+
+#: T0 for #1507's pre-registered package test (YES>=0.90, no same-day
+#: entries before 09:00 local, WSSS excluded, emos_primary daily refresh,
+#: MODEL_PROB_CAP=0.97) -- the UTC instant the *last* of its four
+#: components went live, confirmed by the PM in #1521's "T0 confirmed
+#: (2026-11-10, PM)" comment on #1507. This has already moved twice as
+#: components were added/corrected (2026-11-07 -> 2026-11-08 -> this value)
+#: -- update by hand, in step with #1507's own "T0 confirmed"/"T0 RESET"
+#: comments, never re-derive it from a restart log or guess it.
+ISSUE_1507_T0 = "2026-11-10T21:30:41+00:00"
+
+#: #1507's pre-registered decision checkpoints: an interim futility check
+#: at n=150 settled trades (STOP -> NO-GO only if clearly losing), and the
+#: final GO/NO-GO/INCONCLUSIVE decision at n=400. This report only tracks
+#: progress toward them -- it never auto-applies the decision rule, which
+#: needs a bootstrap read by a human (same discipline as #1452/#1453).
+ISSUE_1507_FUTILITY_N = 150
+ISSUE_1507_FINAL_N = 400
 
 log = logging.getLogger(__name__)
 
@@ -1294,11 +1313,145 @@ def _build_param_change_impact(db, today: datetime) -> list[str]:
     return lines
 
 
-def _build_station_breakdown(db, today: datetime) -> list[str]:
-    """Per-station shadow PnL/win-rate since the change, alongside each
+def _build_1507_package_status(db, today: datetime) -> list[str]:
+    """Standing progress tracker for #1507's pre-registered package test
+    (issue #1521): progress toward the n=150 futility checkpoint and n=400
+    final decision, then overall / by-side / emos_primary-promoted-vs-rest
+    / per-station breakdowns, all since ``ISSUE_1507_T0``.
+
+    Same-day only (``COALESCE(is_next_day, 0) = 0``, ``direction='high'``)
+    -- unlike ``_build_param_change_impact``, this does not add a next-day
+    cut: #1507's own pre-registration (population) is same-day only.
+
+    This is descriptive status, not a WARN condition -- no ``_build_verdict``
+    entry, same treatment as ``_build_param_change_impact``. The
+    ``[FUTILITY CHECK DUE]`` marker is informational only; it never
+    auto-applies #1507's decision rule (that needs a bootstrap read by a
+    human, same discipline as #1452/#1453).
+
+    Every PnL figure is shown twice, explicitly labelled ``sum`` and
+    ``avg`` -- this project has been burned once already by a sum being
+    misread as a per-trade average (see #1521), so both are spelled out
+    rather than left for the reader to infer.
+    """
+    t0_date = ISSUE_1507_T0.split("T")[0]
+    lines = [f"#1507 Package Test Status (since {t0_date})", "-" * 50]
+    try:
+        since = ISSUE_1507_T0
+        from src.config import STATIONS, station_city
+        promoted_stations = tuple(
+            s[0] for s in STATIONS if station_city(s) in EMOS_PRIMARY_PROMOTED_CITIES
+        )
+
+        def _agg(extra_sql: str = "", extra_params: tuple = ()):
+            return db._conn.execute(
+                "SELECT COUNT(*), "
+                "SUM(CASE WHEN outcome IS NOT NULL THEN 1 ELSE 0 END), "
+                "SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END), "
+                "SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END), "
+                "COALESCE(SUM(pnl), 0), "
+                "AVG(CASE WHEN outcome IS NOT NULL THEN actual_price END) "
+                "FROM trades WHERE mode='shadow' AND direction='high' "
+                "AND ts >= ? AND COALESCE(is_next_day, 0) = 0" + extra_sql,
+                (since, *extra_params),
+            ).fetchone()
+
+        def _emit(label: str, row, indent: str = "    ") -> None:
+            n, settled, wins, losses, pnl, avg_price = row
+            n = n or 0
+            settled = settled or 0
+            wins = wins or 0
+            losses = losses or 0
+            pnl = pnl or 0.0
+            pending = n - settled
+            wr = (wins / (wins + losses)) if (wins or losses) else None
+            breakeven = (avg_price / 100.0) if avg_price is not None else None
+            pnl_display = pnl if settled else None
+            avg_pnl = (pnl / settled) if settled else None
+            lines.append(
+                f"{indent}{label}: {n} trades, {settled} settled "
+                f"({pending} pending), win% {_fmt_pct(wr)} "
+                f"(breakeven {_fmt_pct(breakeven)}) ({wins}W/{losses}L)"
+            )
+            lines.append(
+                f"{indent}  PnL: sum {_fmt_pnl_contract(pnl_display)}, "
+                f"avg {_fmt_pnl_contract(avg_pnl)}"
+            )
+
+        overall_row = _agg()
+        overall_n = overall_row[0] or 0
+        if not overall_n:
+            lines.append("  No #1507 trades yet.")
+            lines.append("")
+            return lines
+
+        overall_settled = overall_row[1] or 0
+        marker = (" [FUTILITY CHECK DUE]"
+                  if overall_settled >= ISSUE_1507_FUTILITY_N else "")
+        lines.append(
+            f"  n={overall_settled}/{ISSUE_1507_FUTILITY_N} toward the "
+            f"futility check, {overall_settled}/{ISSUE_1507_FINAL_N} "
+            f"toward final{marker}"
+        )
+        lines.append("")
+
+        _emit("Overall", overall_row)
+        lines.append("")
+
+        lines.append("  By side:")
+        side_rows = db._conn.execute(
+            "SELECT side, COUNT(*), "
+            "SUM(CASE WHEN outcome IS NOT NULL THEN 1 ELSE 0 END), "
+            "SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END), "
+            "SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END), "
+            "COALESCE(SUM(pnl), 0), "
+            "AVG(CASE WHEN outcome IS NOT NULL THEN actual_price END) "
+            "FROM trades WHERE mode='shadow' AND direction='high' "
+            "AND ts >= ? AND COALESCE(is_next_day, 0) = 0 "
+            "GROUP BY side ORDER BY side",
+            (since,),
+        ).fetchall()
+        for side, *rest in side_rows:
+            _emit(side, tuple(rest))
+        lines.append("")
+
+        if promoted_stations:
+            lines.append("  emos_primary-promoted (7) vs rest:")
+            placeholders = ",".join("?" * len(promoted_stations))
+            promoted_row = _agg(f" AND station IN ({placeholders})",
+                                 promoted_stations)
+            rest_row = _agg(f" AND station NOT IN ({placeholders})",
+                             promoted_stations)
+            _emit("Promoted (7)", promoted_row)
+            _emit("Rest", rest_row)
+            lines.append("")
+
+        lines.extend(_build_station_breakdown(
+            db, today, since=ISSUE_1507_T0,
+            title="#1507 Package Test -- Per-Station Breakdown",
+        ))
+
+    except Exception:
+        log.exception("#1507 package-status query failed")
+        lines.append("  (unavailable -- query error)")
+        lines.append("")
+    return lines
+
+
+def _build_station_breakdown(
+    db, today: datetime,
+    since: str = PARAM_CHANGE_DATE,
+    title: str = "Per-Station Breakdown",
+) -> list[str]:
+    """Per-station shadow PnL/win-rate since ``since``, alongside each
     city's latest EMOS-vs-legacy CRPS -- so a station's trading edge and its
     underlying forecast quality are read side by side, not as two separate
     reports that have to be mentally merged.
+
+    ``since``/``title`` default to the original #1451-era entry-gate-change
+    call (unchanged behaviour); ``_build_1507_package_status`` (#1521) calls
+    this a second time with ``ISSUE_1507_T0`` and its own title rather than
+    duplicating the station-breakdown logic.
 
     Same-day trades only (#1450) -- next-day evaluations are shadow-only
     research that can never go live, and pooling them here would mix a
@@ -1310,8 +1463,9 @@ def _build_station_breakdown(db, today: datetime) -> list[str]:
     Sorted by trade count (most data first), not PnL -- this early, one
     settled trade swinging +/-100% is not what should decide a top-10 slot.
     """
-    lines = ["Per-Station Breakdown (top 10 by trade count, same-day only, "
-             "since 2026-10-11)", "-" * 55]
+    since_date = since.split("T")[0]
+    lines = [f"{title} (top 10 by trade count, same-day only, "
+             f"since {since_date})", "-" * 55]
     try:
         from src.config import STATIONS, station_city
         station_to_city = {s[0]: station_city(s) for s in STATIONS}
@@ -1326,7 +1480,7 @@ def _build_station_breakdown(db, today: datetime) -> list[str]:
             "FROM trades WHERE mode='shadow' AND direction='high' AND ts >= ? "
             "AND COALESCE(is_next_day, 0) = 0 "
             "GROUP BY station ORDER BY COUNT(*) DESC LIMIT 10",
-            (PARAM_CHANGE_DATE,),
+            (since,),
         ).fetchall()
         if not rows:
             lines.append("  No shadow trades since the change yet.")
@@ -1814,6 +1968,7 @@ def build_report(db) -> str:
         ("silent_failures", _build_silent_failures),
         ("log_errors", _build_log_errors),
         ("param_change", _build_param_change_impact),
+        ("package_1507", _build_1507_package_status),
         ("stations", _build_station_breakdown),
     ]:
         try:
