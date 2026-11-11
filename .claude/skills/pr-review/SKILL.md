@@ -100,6 +100,24 @@ tool call or batch.
 **Frontend PRs** also require Designer approval before merge; Designer change
 requests are blockers.
 
+**`gh pr merge --delete-branch` failing on the branch-delete step is routine,
+not a sign the merge failed.** Every dev-created PR is built in a
+dev-workflow-mandated isolated worktree (`.claude/worktrees/agent-<branch>/`)
+that stays checked out after the PR opens (so the dev can push review
+fixes to it) — `git` refuses to delete a branch an existing worktree has
+checked out, so `gh pr merge --squash --delete-branch` exits 1 with `failed
+to delete local branch ... used by worktree ...` on almost every
+worktree-built PR. The squash-merge on GitHub itself still succeeds; don't
+re-run the merge or treat this as an error to diagnose. Confirm with `gh pr
+view <N> --json state,mergedAt` only if genuinely unsure, then clean up
+locally right away: `git worktree remove .claude/worktrees/agent-<branch>
+--force` followed by `git branch -d <branch>` — safe once merged, since the
+worktree's content is already on master. Separately, if the merge instead
+fails with "the head branch is not up to date with the base branch" (a
+different PR merged into master first), run `gh api -X PUT
+repos/{o}/{r}/pulls/<N>/update-branch`, wait for CI to re-run on the new
+head SHA (checks re-queue from scratch), then merge again.
+
 ## 5. Post-review actions (review is NOT complete without these)
 
 Pre-approval checklist:

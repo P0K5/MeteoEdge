@@ -101,6 +101,14 @@ you stopped and roughly where each got to, then reconcile the board for any
 issue whose agent was killed mid-transition. Do not report an agent as "still
 running, I'll notify you when it finishes" in response to a pause.
 
+**A spawned subagent going idle is yours to resolve, not the user's to
+notice.** Session rate limits pause or kill subagents mid-task; check
+(`ListAgents`) rather than waiting for the user to ask again. A graceful
+pause resumes in place via `SendMessage` to the same agent name/id. A hard
+termination is not resumable by name — respawn a fresh agent pointed at the
+same worktree path to continue; never re-spawn under the same name, which
+risks a duplicate agent running against the same branch.
+
 ## Status reporting format
 
 ```
