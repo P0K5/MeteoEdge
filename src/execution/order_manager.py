@@ -6,6 +6,7 @@ import os
 import re
 import tempfile
 import threading
+import time
 from collections import defaultdict
 from datetime import datetime, timezone
 
@@ -37,6 +38,83 @@ def _parse_polymarket_balance(err: str) -> "int | None":
     if m:
         return int(m.group(1))
     return None
+
+
+# ---------------------------------------------------------------------------
+# Wallet /v2/positions fetch -- shared cache + 429 backoff (issue #1523)
+# ---------------------------------------------------------------------------
+#
+# Every poll, reconcile_timeout_fills() -> _wallet_held_token_ids() and
+# reconcile_wallet_to_db() -> _wallet_held_positions() each hit the exact
+# same data-api.polymarket.com /v2/positions URL for the same wallet, back
+# to back. That doubled call volume (288 polls/day -> up to 576 calls/day
+# for one wallet) is what was tripping Polymarket's rate limit. A short,
+# per-wallet cache on the raw response collapses that pair into one HTTP
+# call per poll without staling the data between polls (POLL_INTERVAL_SECONDS
+# defaults to 300s -- far longer than the cache TTL below).
+_WALLET_POSITIONS_CACHE_TTL_SECONDS = 15.0
+_DEFAULT_429_RETRY_DELAY_SECONDS = 1.5
+
+_wallet_positions_cache: dict = {}  # wallet -> (monotonic_fetch_time, raw_data_list)
+_wallet_positions_cache_lock = threading.Lock()
+
+
+def _fetch_wallet_positions_raw(wallet: str) -> list:
+    """Fetch the raw v2 ``/positions`` ``"data"`` list for *wallet*.
+
+    Caching: a hit within ``_WALLET_POSITIONS_CACHE_TTL_SECONDS`` is returned
+    without a network call -- this is what dedupes the
+    ``_wallet_held_token_ids()`` / ``_wallet_held_positions()`` pair within a
+    single poll (issue #1523).
+
+    Retry: on HTTP 429 specifically, sleep once (honoring a ``Retry-After``
+    response header when present, else a short fixed delay) and retry
+    exactly once. Any other outcome -- a non-429 HTTP error (e.g. 500), a
+    network/timeout exception, or a second 429 on the retry -- propagates to
+    the caller immediately with no further retry; callers already degrade
+    safely (log a warning, skip this poll's reconciliation) on any exception
+    from here, same as before this fix.
+
+    Does not change the v2 URL, params, or field mapping (see
+    ``_wallet_held_token_ids`` / ``_wallet_held_positions`` below) -- only
+    call frequency and transient-failure handling, per issue #1523.
+    """
+    with _wallet_positions_cache_lock:
+        cached = _wallet_positions_cache.get(wallet)
+        if cached is not None:
+            fetched_at, data = cached
+            if time.monotonic() - fetched_at < _WALLET_POSITIONS_CACHE_TTL_SECONDS:
+                return data
+
+    import httpx
+    url = (
+        "https://data-api.polymarket.com/v2/positions"
+        f"?user={wallet}&filter_type=TOKENS&filter_amount=0.01&limit=100&status=OPEN"
+    )
+    r = httpx.get(url, timeout=15)
+    if r.status_code == 429:
+        retry_after = _DEFAULT_429_RETRY_DELAY_SECONDS
+        header_val = r.headers.get("Retry-After")
+        if header_val:
+            try:
+                retry_after = float(header_val)
+            except (TypeError, ValueError):
+                pass
+        log.warning(
+            "[reconcile] wallet fetch got 429, retrying once after %.1fs", retry_after,
+        )
+        time.sleep(retry_after)
+        r = httpx.get(url, timeout=15)
+
+    r.raise_for_status()
+    rows = r.json()
+    data = rows["data"]
+    if not isinstance(data, list):
+        raise ValueError(f"unexpected 'data' type in v2 /positions response: {type(data)}")
+
+    with _wallet_positions_cache_lock:
+        _wallet_positions_cache[wallet] = (time.monotonic(), data)
+    return data
 
 
 # ---------------------------------------------------------------------------
@@ -251,22 +329,17 @@ def _wallet_held_token_ids() -> set:
     or no list ``"data"``) raises here and is caught below -- same
     "skip reconciliation" degradation as any other wallet-fetch failure,
     never silently treated as "wallet is empty".
+
+    Issue #1523: the HTTP fetch itself (with its short per-wallet cache and
+    429 retry) lives in ``_fetch_wallet_positions_raw`` -- shared with
+    ``_wallet_held_positions`` below so the two don't double-hit the endpoint
+    within the same poll.
     """
     wallet = os.environ.get("POLYMARKET_DEPOSIT_WALLET", "")
     if not wallet:
         return set()
     try:
-        import httpx
-        url = (
-            "https://data-api.polymarket.com/v2/positions"
-            f"?user={wallet}&filter_type=TOKENS&filter_amount=0.01&limit=100&status=OPEN"
-        )
-        r = httpx.get(url, timeout=15)
-        r.raise_for_status()
-        rows = r.json()
-        data = rows["data"]
-        if not isinstance(data, list):
-            raise ValueError(f"unexpected 'data' type in v2 /positions response: {type(data)}")
+        data = _fetch_wallet_positions_raw(wallet)
         return {
             str(row.get("token_id") or "")
             for row in data
@@ -294,22 +367,15 @@ def _wallet_held_positions() -> list:
     Issue #1510: migrated off the retired Data API v1 ``/positions`` endpoint
     to v2 (v1 retired 2026-11-02, returned 410 Gone). See
     ``_wallet_held_token_ids`` above for the envelope/field-name notes.
+
+    Issue #1523: shares its HTTP fetch (cache + 429 retry) with
+    ``_wallet_held_token_ids`` above via ``_fetch_wallet_positions_raw``.
     """
     wallet = os.environ.get("POLYMARKET_DEPOSIT_WALLET", "")
     if not wallet:
         return []
     try:
-        import httpx
-        url = (
-            "https://data-api.polymarket.com/v2/positions"
-            f"?user={wallet}&filter_type=TOKENS&filter_amount=0.01&limit=100&status=OPEN"
-        )
-        r = httpx.get(url, timeout=15)
-        r.raise_for_status()
-        rows = r.json()
-        data = rows["data"]
-        if not isinstance(data, list):
-            raise ValueError(f"unexpected 'data' type in v2 /positions response: {type(data)}")
+        data = _fetch_wallet_positions_raw(wallet)
         result = []
         for row in data:
             asset = str(row.get("token_id") or "")
