@@ -121,6 +121,11 @@ def _interpolate_model_temp(
     """Linearly interpolate model temperature at obs_time from the hourly consensus path.
 
     consensus: list of (iso_time_str, temp_f) sorted by time ascending.
+        ``build_consensus()`` converts Open-Meteo's naive-local ``timezone=auto``
+        timestamps to true UTC instants before returning them (issue #1525),
+        so ``iso_time_str`` here is always a correct UTC instant — this
+        function does not need (and must not re-apply) any further
+        local-to-UTC correction of its own.
     obs_time: tz-aware UTC datetime.
     Returns interpolated temp_f, or None if obs_time is out of range.
     """
