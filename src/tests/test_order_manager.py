@@ -1722,13 +1722,17 @@ class TestReconcileWalletToDbIntegration:
 # ---------------------------------------------------------------------------
 
 class _FakeWalletResp:
-    def __init__(self, payload, status_ok=True):
+    def __init__(self, payload, status_ok=True, status_code=None, headers=None):
         self._payload = payload
-        self._status_ok = status_ok
+        # status_code drives raise_for_status(), matching real httpx
+        # semantics (>= 400 raises). status_ok is kept for the pre-#1523
+        # tests that only cared about ok-vs-error, not the specific code.
+        self.status_code = status_code if status_code is not None else (200 if status_ok else 500)
+        self.headers = headers or {}
 
     def raise_for_status(self):
-        if not self._status_ok:
-            raise RuntimeError("simulated HTTP error")
+        if self.status_code >= 400:
+            raise RuntimeError(f"simulated HTTP error {self.status_code}")
 
     def json(self):
         return self._payload
@@ -1740,6 +1744,16 @@ def _v2_envelope(rows):
 
 class TestWalletHeldTokenIdsV2Migration:
     """_wallet_held_token_ids() against the v2 /positions envelope."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_wallet_positions_cache(self):
+        """Issue #1523 added a short-TTL cache shared by the fetch helper --
+        clear it before every test so each test's mocked httpx.get response
+        is actually exercised, not a prior test's cached result."""
+        import src.execution.order_manager as om
+        om._wallet_positions_cache.clear()
+        yield
+        om._wallet_positions_cache.clear()
 
     def test_returns_non_redeemable_token_ids(self, monkeypatch):
         import src.execution.order_manager as om
@@ -1807,6 +1821,13 @@ class TestWalletHeldTokenIdsV2Migration:
 class TestWalletHeldPositionsV2Migration:
     """_wallet_held_positions() against the v2 /positions envelope."""
 
+    @pytest.fixture(autouse=True)
+    def _clear_wallet_positions_cache(self):
+        import src.execution.order_manager as om
+        om._wallet_positions_cache.clear()
+        yield
+        om._wallet_positions_cache.clear()
+
     def test_returns_size_and_price_from_v2_fields(self, monkeypatch):
         import src.execution.order_manager as om
 
@@ -1853,3 +1874,135 @@ class TestWalletHeldPositionsV2Migration:
 
         assert positions == []
         assert any("wallet fetch failed" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Issue #1523: dedupe the per-poll double-fetch + 429-specific backoff retry.
+# ---------------------------------------------------------------------------
+
+class TestWalletPositionsFetchDedupeAndBackoff:
+    """_fetch_wallet_positions_raw(): shared cache + 429-only retry."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_wallet_positions_cache(self):
+        import src.execution.order_manager as om
+        om._wallet_positions_cache.clear()
+        yield
+        om._wallet_positions_cache.clear()
+
+    def test_one_http_call_per_poll_across_both_callers(self, monkeypatch):
+        """_wallet_held_token_ids() (reconcile_timeout_fills) and
+        _wallet_held_positions() (reconcile_wallet_to_db) both run once per
+        poll -- the second call must be served from cache, not a second
+        HTTP request (the #1523 root cause: 2 calls/poll tripping the 429
+        rate limit)."""
+        import src.execution.order_manager as om
+
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", "0x" + "1" * 40)
+        rows = [{"token_id": "tok-open", "current_size": 5.0, "avg_price": 0.42, "redeemable": False}]
+        with patch("httpx.get", return_value=_FakeWalletResp(_v2_envelope(rows))) as mock_get:
+            held = om._wallet_held_token_ids()
+            positions = om._wallet_held_positions()
+
+        assert mock_get.call_count == 1
+        assert held == {"tok-open"}
+        assert positions == [{"asset_id": "tok-open", "size": pytest.approx(5.0), "avg_price": pytest.approx(0.42)}]
+
+    def test_429_then_200_on_retry_succeeds(self, monkeypatch):
+        import src.execution.order_manager as om
+
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", "0x" + "1" * 40)
+        rows = [{"token_id": "tok-open", "current_size": 1.0, "avg_price": 0.5, "redeemable": False}]
+        responses = [
+            _FakeWalletResp({}, status_code=429, headers={"Retry-After": "0"}),
+            _FakeWalletResp(_v2_envelope(rows)),
+        ]
+        with patch("httpx.get", side_effect=responses) as mock_get:
+            held = om._wallet_held_token_ids()
+
+        assert mock_get.call_count == 2
+        assert held == {"tok-open"}
+
+    def test_429_persisting_through_retry_degrades_safely(self, monkeypatch, caplog):
+        """Both attempts return 429 -- no infinite retry loop, degrades to
+        the same empty-set + logged-warning behavior as any other failure."""
+        import logging
+        import src.execution.order_manager as om
+
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", "0x" + "1" * 40)
+        responses = [
+            _FakeWalletResp({}, status_code=429, headers={"Retry-After": "0"}),
+            _FakeWalletResp({}, status_code=429, headers={"Retry-After": "0"}),
+        ]
+        with patch("httpx.get", side_effect=responses) as mock_get:
+            with caplog.at_level(logging.WARNING):
+                held = om._wallet_held_token_ids()
+
+        assert mock_get.call_count == 2
+        assert held == set()
+        assert any("wallet fetch failed" in r.message for r in caplog.records)
+
+    def test_429_without_retry_after_header_uses_fixed_delay(self, monkeypatch):
+        """No Retry-After header -> falls back to the fixed default delay
+        (and still only retries once)."""
+        import src.execution.order_manager as om
+
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", "0x" + "1" * 40)
+        rows = [{"token_id": "tok-open", "current_size": 1.0, "avg_price": 0.5, "redeemable": False}]
+        responses = [
+            _FakeWalletResp({}, status_code=429),  # no headers at all
+            _FakeWalletResp(_v2_envelope(rows)),
+        ]
+        sleep_calls = []
+        with patch("httpx.get", side_effect=responses), \
+             patch("src.execution.order_manager.time.sleep", side_effect=lambda s: sleep_calls.append(s)):
+            held = om._wallet_held_token_ids()
+
+        assert held == {"tok-open"}
+        assert sleep_calls == [om._DEFAULT_429_RETRY_DELAY_SECONDS]
+
+    def test_non_429_http_error_not_retried(self, monkeypatch):
+        """A real error like 500 must fail fast -- no retry, same as today."""
+        import src.execution.order_manager as om
+
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", "0x" + "1" * 40)
+        with patch("httpx.get", return_value=_FakeWalletResp({}, status_code=500)) as mock_get:
+            held = om._wallet_held_token_ids()
+
+        assert mock_get.call_count == 1
+        assert held == set()
+
+    def test_timeout_not_retried(self, monkeypatch, caplog):
+        """A network timeout must fail fast -- no retry, same as today."""
+        import logging
+        import httpx
+        import src.execution.order_manager as om
+
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", "0x" + "1" * 40)
+        with patch("httpx.get", side_effect=httpx.TimeoutException("timed out")) as mock_get:
+            with caplog.at_level(logging.WARNING):
+                positions = om._wallet_held_positions()
+
+        assert mock_get.call_count == 1
+        assert positions == []
+        assert any("wallet fetch failed" in r.message for r in caplog.records)
+
+    def test_cache_expires_after_ttl(self, monkeypatch):
+        """Once the cache entry is older than the TTL, the next call fetches
+        again -- the dedupe is poll-scoped, not permanent-for-the-process."""
+        import src.execution.order_manager as om
+
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", "0x" + "1" * 40)
+        rows = [{"token_id": "tok-open", "current_size": 1.0, "avg_price": 0.5, "redeemable": False}]
+        with patch("httpx.get", return_value=_FakeWalletResp(_v2_envelope(rows))) as mock_get:
+            om._wallet_held_token_ids()
+            # Simulate the next poll by backdating the cached fetch time
+            # past the TTL instead of sleeping in the test.
+            wallet = "0x" + "1" * 40
+            fetched_at, data = om._wallet_positions_cache[wallet]
+            om._wallet_positions_cache[wallet] = (
+                fetched_at - om._WALLET_POSITIONS_CACHE_TTL_SECONDS - 1, data,
+            )
+            om._wallet_held_positions()
+
+        assert mock_get.call_count == 2
