@@ -208,6 +208,15 @@ def parse_bracket_from_market(market: dict) -> "Bracket | None":
         unit = m.group(3)
         lo, hi = _to_f(float(m.group(1)), unit), _to_f(float(m.group(2)) + 1, unit)
     elif (m := _LABEL_RANGE_DASH.search(label)):
+        # Check for ambiguous negative-range pattern (issue #1530): if the match
+        # is immediately preceded by a dash, it's likely a negative-range attempt
+        # like "-5-2°C", which mis-parses as "5-2°C" (dropping the leading minus)
+        # and produces an inverted bracket. Fail loud instead of silent.
+        start_pos = m.start()
+        if start_pos > 0 and label[start_pos - 1] in '-–':
+            log.warning("[parse] unparseable label: %r", label[:60])
+            return None
+
         # "88-89°F" means the daily high is 88 OR 89 -- the real interval
         # [88, 90). Add 1 to the top edge before unit conversion, matching
         # _LABEL_EXACT (#917). Without this, p_normal_between integrates only

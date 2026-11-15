@@ -223,21 +223,18 @@ class TestNegativeTemperatureLabels:
         assert b.high_f == pytest.approx(22 * 9 / 5 + 32)
 
     def test_range_dash_negative_range_is_a_known_pre_existing_limitation(self):
-        """Open question flagged in the PR, not fixed here (no live Polymarket
-        label currently exercises it): _LABEL_RANGE_DASH's bare '-'/'–'
-        separator is ambiguous with a leading minus sign. A hypothetical
-        negative-range label like '-5-2°C' does NOT return None -- it
-        mis-parses as the *positive* sub-range '5-2°C' (RANGE_DASH matches
-        the '5-2°C' substring, dropping the leading minus), producing an
-        inverted, nonsensical bracket. This ambiguity predates #1528 (the
-        RANGE_DASH regex itself is unchanged by this fix) and is pinned here
-        deliberately so it isn't silently 'corrected' by a future change
-        without re-reading this note -- see the design-wrinkle comment above
-        _LABEL_RANGE_DASH. Follow-up only if Polymarket ever lists a real
-        negative-range label."""
+        """Issue #1530: ambiguous negative-range pattern like '-5-2°C' now
+        fails loud instead of silent. The regex _LABEL_RANGE_DASH's bare
+        '-'/'–' separator is ambiguous with a leading minus sign: a
+        hypothetical label like '-5-2°C' would mis-parse as the *positive*
+        sub-range '5-2°C' (RANGE_DASH matches the substring, dropping the
+        leading minus), producing an inverted, nonsensical bracket
+        (low_f > high_f). Now we detect this pattern (match immediately
+        preceded by a dash) and return None, logging as unparseable. The
+        ambiguity predates #1528, but this fix converts silent failure into
+        loud failure, matching the codebase's fail-safe convention."""
         b = parse_bracket_from_market(_market("-5-2°C"))
-        assert b is not None
-        assert b.low_f > b.high_f  # inverted -- a red flag, not a usable bracket
+        assert b is None  # now fails loud instead of silently inverted
 
 
 class TestBracketLadderMassConservation:
