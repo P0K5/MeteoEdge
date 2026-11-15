@@ -4,7 +4,7 @@ from datetime import datetime, timezone, timedelta
 from unittest.mock import patch
 import pytest
 from src.strategy.scanner import (
-    parse_bracket_from_market, scan_markets, is_highest_temp_market, no_entry_margin_gap,
+    parse_bracket_from_market, scan_markets, is_highest_temp_market, no_entry_margin_gap, _to_f,
 )
 from src.model.envelope import Bracket, WeatherState, p_normal_between
 
@@ -151,6 +151,93 @@ class TestParseBracketFromMarket:
         assert b.yes_price_raw == pytest.approx(0.60)
         assert b.no_ask_cents == 40
         assert b.no_price_raw == pytest.approx(0.40)
+
+
+class TestNegativeTemperatureLabels:
+    """Issue #1528: Helsinki's '-1°C'/'-2°C' labels were falling through all
+    five regexes (no leading-minus support), hitting the unparseable-label
+    warning and returning None -- a full coverage gap, not a precision bug.
+
+    Live Gamma API data (tag_id=84, 500 unique open weather markets, pulled
+    2026-11-15) confirms negative-value labels occur only in EXACT ('-1°C',
+    '-2°C', ... from Warsaw/Beijing low-side markets) and LTE ('-3°C or
+    below', '-4°C or below', ... also Beijing/Warsaw) shapes. No BETWEEN or
+    RANGE_DASH label in that pull contained a negative value, so those two
+    patterns are left sign-less on purpose -- see the design-wrinkle note
+    above _LABEL_BETWEEN/_LABEL_RANGE_DASH in scanner.py. GTE has no live
+    negative example either, but gets a sign-support + regression test
+    anyway since it's the same single-value shape as LTE/EXACT.
+    """
+
+    def test_exact_negative_two_degrees_celsius(self):
+        """'-2°C' (the real logged label) → [-2C, -1C) in source units.
+
+        -2°C = 28.4°F (−2 × 9/5 + 32), -1°C = 30.2°F — verified against the
+        standard C-to-F formula independently of the code under test.
+        """
+        b = parse_bracket_from_market(_market("-2°C"))
+        assert b is not None
+        assert b.low_f == pytest.approx(28.4)
+        assert b.high_f == pytest.approx(30.2)
+
+    def test_exact_negative_one_degree_celsius(self):
+        """'-1°C' (the other real logged label) → [-1C, 0C) → [30.2°F, 32.0°F)."""
+        b = parse_bracket_from_market(_market("-1°C"))
+        assert b is not None
+        assert b.low_f == pytest.approx(30.2)
+        assert b.high_f == pytest.approx(32.0)
+
+    def test_lte_negative_threshold(self):
+        """'-3°C or below' (real Beijing/Warsaw-style label) → top edge is
+        -3 + 1 = -2°C = 28.4°F, matching the existing #917 inclusive-upper
+        convention; lower bound stays the fixed -50°F floor."""
+        b = parse_bracket_from_market(_market("-3°C or below"))
+        assert b is not None
+        assert b.low_f == -50.0
+        assert b.high_f == pytest.approx(28.4)
+
+    def test_gte_negative_threshold(self):
+        """'-6°C or above' → low = -6°C = 21.2°F, high = 200 (open-ended tail).
+        No live example of a negative GTE label was found, but the single-value
+        shape is identical to LTE/EXACT so sign support is added for symmetry."""
+        b = parse_bracket_from_market(_market("-6°C or above"))
+        assert b is not None
+        assert b.low_f == pytest.approx(21.2)
+        assert b.high_f == 200.0
+
+    def test_to_f_negative_celsius_conversion(self):
+        """Direct unit-test of _to_f() for negative inputs -- the C-to-F
+        formula's sign math, verified against the standard conversion rather
+        than assumed correct."""
+        assert _to_f(-2.0, "C") == pytest.approx(28.4)
+        assert _to_f(-1.0, "C") == pytest.approx(30.2)
+        assert _to_f(-40.0, "C") == pytest.approx(-40.0)  # -40 is the C/F fixed point
+
+    def test_positive_exact_regression_unaffected(self):
+        """Regression: positive EXACT labels are completely unaffected by the
+        sign-optional change (explicit non-negative control alongside the
+        pre-existing test_exact_single_value)."""
+        b = parse_bracket_from_market(_market("21°C"))
+        assert b is not None
+        assert b.low_f == pytest.approx(21 * 9 / 5 + 32)
+        assert b.high_f == pytest.approx(22 * 9 / 5 + 32)
+
+    def test_range_dash_negative_range_is_a_known_pre_existing_limitation(self):
+        """Open question flagged in the PR, not fixed here (no live Polymarket
+        label currently exercises it): _LABEL_RANGE_DASH's bare '-'/'–'
+        separator is ambiguous with a leading minus sign. A hypothetical
+        negative-range label like '-5-2°C' does NOT return None -- it
+        mis-parses as the *positive* sub-range '5-2°C' (RANGE_DASH matches
+        the '5-2°C' substring, dropping the leading minus), producing an
+        inverted, nonsensical bracket. This ambiguity predates #1528 (the
+        RANGE_DASH regex itself is unchanged by this fix) and is pinned here
+        deliberately so it isn't silently 'corrected' by a future change
+        without re-reading this note -- see the design-wrinkle comment above
+        _LABEL_RANGE_DASH. Follow-up only if Polymarket ever lists a real
+        negative-range label."""
+        b = parse_bracket_from_market(_market("-5-2°C"))
+        assert b is not None
+        assert b.low_f > b.high_f  # inverted -- a red flag, not a usable bracket
 
 
 class TestBracketLadderMassConservation:

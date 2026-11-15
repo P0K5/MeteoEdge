@@ -142,11 +142,23 @@ def _decode_json_string(value, default):
 # we can detect °C labels and convert bracket boundaries to °F before they enter
 # the envelope model (which is entirely °F-native). US markets label in °F;
 # all non-US Polymarket markets label in °C.
+#
+# Sign handling (#1528): LTE/GTE/EXACT are single-value patterns, so their
+# value group allows an optional leading '-' ("-2°C", "-3°C or below") with
+# no ambiguity. BETWEEN/RANGE_DASH are deliberately left sign-less: both
+# already use '-'/'–' as the *range separator* between two values, and a
+# leading minus on either side would be ambiguous with that separator (e.g.
+# a hypothetical "-5-2°C"). A live Gamma API pull across all open weather
+# markets (2026-11-15, 500 unique markets, tag_id=84) found negative-value
+# labels only in LTE ("-3°C or below" et al.) and EXACT ("-1°C", "-2°C" ...)
+# shapes -- zero BETWEEN/RANGE_DASH labels contain a negative value. Treat
+# negative ranges as an open question rather than guess at the disambiguation
+# rule now; revisit if live data ever shows one.
 _LABEL_LTE = re.compile(
-    r"(\d{1,3})\s*°?\s*([FC])?\s+or\s+(?:below|less|lower|under)", re.IGNORECASE
+    r"(-?\d{1,3})\s*°?\s*([FC])?\s+or\s+(?:below|less|lower|under)", re.IGNORECASE
 )
 _LABEL_GTE = re.compile(
-    r"(\d{1,3})\s*°?\s*([FC])?\s+or\s+(?:above|more|higher|over)", re.IGNORECASE
+    r"(-?\d{1,3})\s*°?\s*([FC])?\s+or\s+(?:above|more|higher|over)", re.IGNORECASE
 )
 _LABEL_BETWEEN = re.compile(
     r"between\s+(\d{1,3})\s*(?:and|to|-|–)\s*(\d{1,3})\s*°?\s*([FC])?", re.IGNORECASE
@@ -155,7 +167,7 @@ _LABEL_BETWEEN = re.compile(
 _LABEL_RANGE_DASH = re.compile(r"(\d{1,3})\s*[-–]\s*(\d{1,3})\s*°\s*([FC])", re.IGNORECASE)
 # Bare single-value: "21°C" or "82°F". Polymarket Asian markets list each possible
 # integer daily high as its own market option. Treat as 1-unit-wide bracket [N, N+1).
-_LABEL_EXACT = re.compile(r"^\s*(\d{1,3})\s*°\s*([FC])\s*$", re.IGNORECASE)
+_LABEL_EXACT = re.compile(r"^\s*(-?\d{1,3})\s*°\s*([FC])\s*$", re.IGNORECASE)
 
 
 def _to_f(val: float, unit_char: "str | None") -> float:
