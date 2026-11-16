@@ -41,7 +41,7 @@ def _parse_polymarket_balance(err: str) -> "int | None":
 
 
 # ---------------------------------------------------------------------------
-# Wallet /v2/positions fetch -- shared cache + 429 backoff (issue #1523)
+# Wallet /v2/positions fetch -- shared cache + 429 backoff (issue #1523, #1532)
 # ---------------------------------------------------------------------------
 #
 # Every poll, reconcile_timeout_fills() -> _wallet_held_token_ids() and
@@ -52,10 +52,14 @@ def _parse_polymarket_balance(err: str) -> "int | None":
 # per-wallet cache on the raw response collapses that pair into one HTTP
 # call per poll without staling the data between polls (POLL_INTERVAL_SECONDS
 # defaults to 300s -- far longer than the cache TTL below).
+#
+# Issue #1532: cache both successes (data list) and failures (exceptions) with
+# the same TTL, so a same-poll second caller re-raises the cached exception
+# instead of making its own independent fetch-then-retry sequence.
 _WALLET_POSITIONS_CACHE_TTL_SECONDS = 15.0
 _DEFAULT_429_RETRY_DELAY_SECONDS = 1.5
 
-_wallet_positions_cache: dict = {}  # wallet -> (monotonic_fetch_time, raw_data_list)
+_wallet_positions_cache: dict = {}  # wallet -> (monotonic_fetch_time, result_or_exception)
 _wallet_positions_cache_lock = threading.Lock()
 
 
@@ -65,56 +69,68 @@ def _fetch_wallet_positions_raw(wallet: str) -> list:
     Caching: a hit within ``_WALLET_POSITIONS_CACHE_TTL_SECONDS`` is returned
     without a network call -- this is what dedupes the
     ``_wallet_held_token_ids()`` / ``_wallet_held_positions()`` pair within a
-    single poll (issue #1523).
+    single poll (issue #1523). Both successes (data lists) and failures
+    (exceptions) are cached with the same TTL, so a same-poll second caller
+    either gets the cached data or the cached exception re-raised, without
+    making a redundant network call (issue #1532).
 
     Retry: on HTTP 429 specifically, sleep once (honoring a ``Retry-After``
     response header when present, else a short fixed delay) and retry
     exactly once. Any other outcome -- a non-429 HTTP error (e.g. 500), a
-    network/timeout exception, or a second 429 on the retry -- propagates to
-    the caller immediately with no further retry; callers already degrade
-    safely (log a warning, skip this poll's reconciliation) on any exception
-    from here, same as before this fix.
+    network/timeout exception, or a second 429 on the retry -- is cached as
+    an exception and re-raised; callers already degrade safely (log a warning,
+    skip this poll's reconciliation) on any exception from here, same as
+    before this fix.
 
     Does not change the v2 URL, params, or field mapping (see
     ``_wallet_held_token_ids`` / ``_wallet_held_positions`` below) -- only
-    call frequency and transient-failure handling, per issue #1523.
+    call frequency and transient-failure handling, per issues #1523, #1532.
     """
     with _wallet_positions_cache_lock:
         cached = _wallet_positions_cache.get(wallet)
         if cached is not None:
-            fetched_at, data = cached
+            fetched_at, result_or_exception = cached
             if time.monotonic() - fetched_at < _WALLET_POSITIONS_CACHE_TTL_SECONDS:
-                return data
+                # Cache hit: either return data or re-raise the cached exception
+                if isinstance(result_or_exception, Exception):
+                    raise result_or_exception
+                return result_or_exception
 
     import httpx
     url = (
         "https://data-api.polymarket.com/v2/positions"
         f"?user={wallet}&filter_type=TOKENS&filter_amount=0.01&limit=100&status=OPEN"
     )
-    r = httpx.get(url, timeout=15)
-    if r.status_code == 429:
-        retry_after = _DEFAULT_429_RETRY_DELAY_SECONDS
-        header_val = r.headers.get("Retry-After")
-        if header_val:
-            try:
-                retry_after = float(header_val)
-            except (TypeError, ValueError):
-                pass
-        log.warning(
-            "[reconcile] wallet fetch got 429, retrying once after %.1fs", retry_after,
-        )
-        time.sleep(retry_after)
+    try:
         r = httpx.get(url, timeout=15)
+        if r.status_code == 429:
+            retry_after = _DEFAULT_429_RETRY_DELAY_SECONDS
+            header_val = r.headers.get("Retry-After")
+            if header_val:
+                try:
+                    retry_after = float(header_val)
+                except (TypeError, ValueError):
+                    pass
+            log.warning(
+                "[reconcile] wallet fetch got 429, retrying once after %.1fs", retry_after,
+            )
+            time.sleep(retry_after)
+            r = httpx.get(url, timeout=15)
 
-    r.raise_for_status()
-    rows = r.json()
-    data = rows["data"]
-    if not isinstance(data, list):
-        raise ValueError(f"unexpected 'data' type in v2 /positions response: {type(data)}")
+        r.raise_for_status()
+        rows = r.json()
+        data = rows["data"]
+        if not isinstance(data, list):
+            raise ValueError(f"unexpected 'data' type in v2 /positions response: {type(data)}")
 
-    with _wallet_positions_cache_lock:
-        _wallet_positions_cache[wallet] = (time.monotonic(), data)
-    return data
+        with _wallet_positions_cache_lock:
+            _wallet_positions_cache[wallet] = (time.monotonic(), data)
+        return data
+    except Exception as e:
+        # Cache the failure (exception) so same-poll caller gets it immediately
+        with _wallet_positions_cache_lock:
+            _wallet_positions_cache[wallet] = (time.monotonic(), e)
+        raise
 
 
 # ---------------------------------------------------------------------------
