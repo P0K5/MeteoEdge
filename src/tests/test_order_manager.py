@@ -68,6 +68,55 @@ def _live_trader(fill_size: float = 1.0):
 
 
 # ===========================================================================
+# _fetch_wallet_positions_raw -- caching (issue #1523, #1532)
+# ===========================================================================
+
+class TestFetchWalletPositionsRawCache:
+    """_fetch_wallet_positions_raw caches both successes and failures."""
+
+    def test_caches_failure_so_same_poll_caller_does_not_duplicate_429(self):
+        """When a 429 failure occurs, second same-poll caller gets cached exception
+        without making its own fetch-then-retry sequence.
+
+        This test verifies the fix for issue #1532: mock httpx.get to always
+        return 429, call _fetch_wallet_positions_raw twice in quick succession
+        (simulating two callers in one poll), and verify the mock is hit only
+        twice (initial + retry) instead of four times (2 callers × 2 calls).
+        """
+        from src.execution.order_manager import (
+            _fetch_wallet_positions_raw,
+            _wallet_positions_cache,
+            _wallet_positions_cache_lock,
+        )
+
+        # Clear the cache before the test
+        with _wallet_positions_cache_lock:
+            _wallet_positions_cache.clear()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 429
+        mock_response.headers = {}
+
+        with patch("httpx.get", return_value=mock_response) as mock_get:
+            wallet = "0xtest_wallet_1532"
+
+            # First call: should make 2 HTTP calls (initial + retry)
+            with pytest.raises(Exception):  # Will raise HTTPStatusError from raise_for_status
+                _fetch_wallet_positions_raw(wallet)
+
+            assert mock_get.call_count == 2, \
+                f"First call should make 2 HTTP calls (initial + retry), got {mock_get.call_count}"
+
+            # Second call (same-poll): should NOT make any new HTTP calls,
+            # should get the cached exception and re-raise it immediately
+            with pytest.raises(Exception):
+                _fetch_wallet_positions_raw(wallet)
+
+            assert mock_get.call_count == 2, \
+                f"Second call should use cached exception, not make new calls; total calls should stay 2, got {mock_get.call_count}"
+
+
+# ===========================================================================
 # reconcile_timeout_fills
 # ===========================================================================
 
