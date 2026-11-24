@@ -1,5 +1,9 @@
 name: Graphify Knowledge Graph Update
 
+concurrency:
+  group: graphify-graph-push
+  cancel-in-progress: false
+
 on:
   push:
     branches: [ master ]
