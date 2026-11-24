@@ -82,6 +82,20 @@ A PR may NEVER be approved or merged unless ALL of the following are true:
    `Lint (flake8)`, `Test (pytest)`, `PR body (How to deploy + issue link)`,
    `gitleaks`.
 
+   **Master protection is moving from classic branch protection to a
+   repository ruleset (issue #1534).** The **only** bypass actor on that
+   ruleset is a write deploy key (secret `CI_PUSH_DEPLOY_KEY`), used solely
+   by the `graphify-update.yml` and `refresh-session-context.yml` workflows
+   to commit generated files (`graphify-out/*`, `.claude/session-context.env`).
+   Humans and agents still have no bypass — this does not reopen the
+   `enforce_admins: true` gap above. Reason for the deploy key: on a
+   user-owned repo, GitHub rejects the built-in Actions app as a ruleset
+   bypass actor ("must be part of the ruleset source or owner organization"),
+   so a deploy key is the supported alternative for letting those two bot
+   workflows push generated-file commits straight to `master`. Provisioning
+   the deploy key and configuring the ruleset is an owner-side repo-settings
+   change, not something done from a PR.
+
    **`AI / DeepSeek review` is deliberately NOT a GitHub-enforced required
    check**, even though it's still mandatory in practice via rule 1 above and
    must be verified by a human before every approval. Reason: the review

@@ -38,6 +38,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # Deploy key is the sole ruleset bypass actor for master (issue #1534).
+          # When the secret is absent, this input is empty and checkout falls
+          # back to GITHUB_TOKEN — unchanged behaviour until the owner
+          # provisions the key.
+          ssh-key: ${{ secrets.CI_PUSH_DEPLOY_KEY }}
+          persist-credentials: true
 
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
@@ -45,7 +51,7 @@ jobs:
           python-version: "3.10"
 
       - name: Install Graphify
-        run: pip install graphifyy openai
+        run: pip install graphifyy==0.9.118 openai
 
       - name: Create .graphifyignore
         run: |
@@ -60,8 +66,23 @@ jobs:
           .env
           EOF
 
+      - name: Restore graphify cache
+        uses: actions/cache/restore@v4
+        with:
+          path: graphify-out/cache
+          key: graphify-cache-${{ github.run_id }}
+          restore-keys: |
+            graphify-cache-
+
       - name: Incremental graph update (code only, free)
         run: graphify update . --force
+
+      - name: Save graphify cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: graphify-out/cache
+          key: graphify-cache-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Commit updated graph
         run: |
@@ -69,13 +90,18 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add graphify-out/graph.json
           git diff --staged --quiet || git commit -m "chore(graph): incremental graph update [skip ci]"
+          git pull --rebase origin master
           git push
 
   # -------------------------------------------------------
   # JOB 2: Full rebuild — runs weekly (Monday 03:00 UTC)
   # or manually via workflow_dispatch.
   # Re-extracts all docs semantically + re-clusters communities.
-  # Cost: ~$0.02 per run.
+  # Cost: first run after the cache lands here is ~$1 (full
+  # re-send of all docs to DeepSeek). Every run after that only
+  # re-sends files that changed or were left incomplete by a
+  # prior truncated/retried run, gated by the restored
+  # graphify-out/cache plus the committed manifest.json.
   # -------------------------------------------------------
   full-rebuild:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
@@ -88,6 +114,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # Deploy key is the sole ruleset bypass actor for master (issue #1534).
+          # When the secret is absent, this input is empty and checkout falls
+          # back to GITHUB_TOKEN — unchanged behaviour until the owner
+          # provisions the key.
+          ssh-key: ${{ secrets.CI_PUSH_DEPLOY_KEY }}
+          persist-credentials: true
 
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
@@ -95,7 +127,7 @@ jobs:
           python-version: "3.10"
 
       - name: Install Graphify
-        run: pip install graphifyy openai
+        run: pip install graphifyy==0.9.118 openai
 
       - name: Create .graphifyignore
         run: |
@@ -110,15 +142,31 @@ jobs:
           .env
           EOF
 
+      - name: Restore graphify cache
+        uses: actions/cache/restore@v4
+        with:
+          path: graphify-out/cache
+          key: graphify-cache-${{ github.run_id }}
+          restore-keys: |
+            graphify-cache-
+
       - name: Full semantic extraction
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          GRAPHIFY_MAX_OUTPUT_TOKENS: "32768"
         run: |
           graphify extract . \
             --backend deepseek \
             --max-concurrency 4 \
             --token-budget 32000 \
             --no-cluster
+
+      - name: Save graphify cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: graphify-out/cache
+          key: graphify-cache-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Cluster and label communities
         env:
@@ -134,4 +182,5 @@ jobs:
                   graphify-out/.graphify_labels.json \
                   graphify-out/manifest.json
           git diff --staged --quiet || git commit -m "chore(graph): weekly full graph rebuild [skip ci]"
+          git pull --rebase origin master
           git push

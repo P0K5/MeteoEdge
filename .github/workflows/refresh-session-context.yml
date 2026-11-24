@@ -35,11 +35,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # Must use a PAT with `project` scope — GITHUB_TOKEN cannot read Projects v2
-          token: ${{ secrets.GH_PROJECT_PAT }}
+          # Deploy key is the sole ruleset bypass actor for master (issue
+          # #1534) — it grants the push access this workflow needs. When the
+          # secret is absent, this input is empty and checkout falls back to
+          # GITHUB_TOKEN, unchanged behaviour until the owner provisions the
+          # key.
+          ssh-key: ${{ secrets.CI_PUSH_DEPLOY_KEY }}
+          persist-credentials: true
 
       - name: Run bootstrap script
         env:
+          # The Projects v2 read still needs a PAT with `project` scope —
+          # GITHUB_TOKEN (and the deploy key above) cannot read Projects v2.
           GH_TOKEN: ${{ secrets.GH_PROJECT_PAT }}
         run: bash scripts/bootstrap_session.sh
 
@@ -52,7 +59,7 @@ jobs:
             echo "No changes to session context — skipping commit."
           else
             TIMESTAMP=$(date -u +'%Y-%m-%d %H:%M UTC')
-            git commit -m "chore(ci): refresh session context IDs [$TIMESTAMP]"
+            git commit -m "chore(ci): refresh session context IDs [$TIMESTAMP] [skip ci]"
             git pull --rebase origin master
             git push
           fi
