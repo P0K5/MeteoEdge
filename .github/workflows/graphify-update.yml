@@ -45,10 +45,10 @@ jobs:
           ssh-key: ${{ secrets.CI_PUSH_DEPLOY_KEY }}
           persist-credentials: true
 
-      - name: Set up Python 3.10
+      - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.12"
 
       - name: Install Graphify
         run: pip install graphifyy==0.9.118 openai
@@ -121,10 +121,10 @@ jobs:
           ssh-key: ${{ secrets.CI_PUSH_DEPLOY_KEY }}
           persist-credentials: true
 
-      - name: Set up Python 3.10
+      - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.12"
 
       - name: Install Graphify
         run: pip install graphifyy==0.9.118 openai
