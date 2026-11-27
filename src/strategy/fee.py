@@ -5,15 +5,15 @@ while makers pay no fee. The formula is:
     fee_cents = 100 * feeRate * p * (1 - p)
 where p = price_cents / 100 and feeRate is the rate for the market type.
 
-Weather markets use feeRate=0.05 (0.05%).
+Weather markets use feeRate=0.01 (1% taker, 0% maker).
 Crypto markets use feeRate=0.07 (0.07%).
 
 Published schedule: https://docs.polymarket.com/trading/fees
-(Checked 2026-08-28: Weather markets confirmed at 0.05% taker fee, 0% maker fee)
+(Checked 2026-11-27: Weather markets confirmed at 0.01 (1%) taker fee, 0% maker fee)
 """
 
-# Weather market taker fee rate (0.05%)
-WEATHER_FEE_RATE = 0.05
+# Weather market taker fee rate (1%)
+WEATHER_FEE_RATE = 0.01
 
 
 def estimate_fee_cents(price_cents: int, maker: bool = False) -> float:
@@ -23,7 +23,7 @@ def estimate_fee_cents(price_cents: int, maker: bool = False) -> float:
     where p = price_cents / 100.
 
     Published schedule: https://docs.polymarket.com/trading/fees
-    (Checked 2026-08-28: Weather markets use 0.05% taker, 0% maker)
+    (Checked 2026-11-27: Weather markets use 0.01 (1%) taker, 0% maker)
 
     Args:
         price_cents: Contract price in cents (1–99)

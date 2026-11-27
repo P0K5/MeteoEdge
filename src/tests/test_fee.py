@@ -4,22 +4,22 @@ from src.strategy.fee import estimate_fee_cents
 
 
 class TestEstimateFeeCents:
-    """Tests for the Polymarket fee model (weather markets, 0.05% taker)."""
+    """Tests for the Polymarket fee model (weather markets, 1% taker)."""
 
     def test_fee_at_fifty_cents_is_max(self):
-        """50¢ price gives the maximum fee (0.05 * 0.5 * 0.5 * 100 = 1.25¢)."""
+        """50¢ price gives the maximum fee (0.01 * 0.5 * 0.5 * 100 = 0.25¢)."""
         fee = estimate_fee_cents(50)
-        assert fee == pytest.approx(1.25, abs=1e-4)
+        assert fee == pytest.approx(0.25, abs=1e-4)
 
     def test_fee_at_ninety_nine_cents(self):
-        """99¢ price gives 0.05 * 0.99 * 0.01 * 100 = 0.0495¢ (not floored)."""
+        """99¢ price gives 0.01 * 0.99 * 0.01 * 100 = 0.0099¢ (not floored)."""
         fee = estimate_fee_cents(99)
-        assert fee == pytest.approx(0.0495, abs=1e-4)
+        assert fee == pytest.approx(0.0099, abs=1e-4)
 
     def test_fee_at_one_cent(self):
-        """1¢ price gives 0.05 * 0.01 * 0.99 * 100 = 0.0495¢ (not floored)."""
+        """1¢ price gives 0.01 * 0.01 * 0.99 * 100 = 0.0099¢ (not floored)."""
         fee = estimate_fee_cents(1)
-        assert fee == pytest.approx(0.0495, abs=1e-4)
+        assert fee == pytest.approx(0.0099, abs=1e-4)
 
     def test_fee_is_symmetric(self):
         """Fee at price p equals fee at price (100-p) by symmetry."""
@@ -28,7 +28,7 @@ class TestEstimateFeeCents:
     def test_fee_never_clamped_to_floor(self):
         """Regression test: the old 1.0¢ floor is removed."""
         # At 1¢ and 99¢, the old model would return 1.0¢
-        # The new model returns 0.0495¢ (no floor)
+        # The new model returns 0.0099¢ (no floor)
         assert estimate_fee_cents(1) < 0.1
         assert estimate_fee_cents(99) < 0.1
 
@@ -59,3 +59,13 @@ class TestEstimateFeeCents:
         default_50 = estimate_fee_cents(50)
         explicit_50 = estimate_fee_cents(50, maker=False)
         assert default_50 == explicit_50
+
+    def test_acceptance_criteria_94_cents(self):
+        """Acceptance criterion: 94¢ → 0.0564¢ (0.01 * 0.94 * 0.06 * 100)."""
+        fee = estimate_fee_cents(94)
+        assert fee == pytest.approx(0.0564, abs=1e-4)
+
+    def test_acceptance_criteria_80_cents(self):
+        """Acceptance criterion: 80¢ → 0.16¢ (0.01 * 0.80 * 0.20 * 100)."""
+        fee = estimate_fee_cents(80)
+        assert fee == pytest.approx(0.16, abs=1e-4)
