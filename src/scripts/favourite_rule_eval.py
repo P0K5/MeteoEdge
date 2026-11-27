@@ -199,6 +199,14 @@ def _file_date(path: Path):
         return None
 
 
+#: The only fields select_first_qualifying_entries (and everything it feeds)
+#: ever reads from a snapshot row -- see load_snapshots' projection step.
+_SNAPSHOT_FIELDS_NEEDED = (
+    "ticker", "station", "date", "yes_ask", "no_ask", "is_next_day",
+    "bracket_low", "bracket_high", "ts",
+)
+
+
 def load_snapshots(
     since: str = ISSUE_1545_T0,
     until: "str | None" = None,
@@ -259,7 +267,17 @@ def load_snapshots(
                 continue
             if until_dt is not None and ts >= until_dt:
                 continue
-            out.append(row)
+            # Project down to only the fields select_first_qualifying_entries
+            # ever reads, rather than retaining the full ~35-key snapshot row
+            # (ensemble_*, gate_*, p_yes, emos_mode, ...). A multi-month run
+            # keeps millions of rows alive at once (file-level pruning above
+            # narrows WHICH files are read, not how much of each matching row
+            # is kept) -- retaining full rows measured at ~10GB+ resident for
+            # a Sep-Nov run against real production logs while validating
+            # this PR (issue #1545 review), enough to make the host visibly
+            # thrash. Projecting first cuts that by roughly the same factor
+            # as the field-count reduction (~35 -> 9).
+            out.append({k: row.get(k) for k in _SNAPSHOT_FIELDS_NEEDED})
     return out
 
 

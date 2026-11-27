@@ -355,6 +355,32 @@ class TestLoadSnapshots:
         base = tmp_path / "does_not_exist" / "snapshots.jsonl"
         assert load_snapshots(base=base) == []
 
+    def test_rows_are_projected_to_only_needed_fields(self, tmp_path):
+        # Real production snapshot rows carry ~35 fields (ensemble_*, gate_*,
+        # p_yes, emos_mode, ...). load_snapshots must not retain any of that
+        # -- holding every field of every row for a multi-month run measured
+        # at 10GB+ resident against real production logs (issue #1545
+        # review). Only the fields select_first_qualifying_entries actually
+        # reads should survive.
+        base = tmp_path / "snapshots.jsonl"
+        row = _snap(ticker="0xaaa", ts="2026-11-24T05:00:00+00:00")
+        row["ensemble_mean"] = 58.2
+        row["gate_verdict"] = "below_min_edge"
+        row["p_yes"] = 0.05
+        row["emos_mode"] = "emos_shadow"
+        base.write_text(json.dumps(row) + "\n")
+
+        rows = load_snapshots(
+            since="2026-11-24T00:00:00+00:00", until="2026-11-25T00:00:00+00:00", base=base,
+        )
+        assert len(rows) == 1
+        assert set(rows[0]) == {
+            "ticker", "station", "date", "yes_ask", "no_ask", "is_next_day",
+            "bracket_low", "bracket_high", "ts",
+        }
+        assert "ensemble_mean" not in rows[0]
+        assert "gate_verdict" not in rows[0]
+
     def test_out_of_range_dated_file_never_read(self, tmp_path):
         # Adversarial fixture: the file's OWN rotation date (2026-01-01, way
         # outside [since, until)) disagrees with the row's ts field (claims
