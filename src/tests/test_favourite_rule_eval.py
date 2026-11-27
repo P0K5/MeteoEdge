@@ -7,11 +7,15 @@ Covers the three groups the issue's own implementation plan calls for:
 - clustering key (build_trade_rows's cluster_key; clustered_bootstrap only
   ever draws from existing clusters)
 
+Plus, from the "Amended 2026-11-27 (PM)" rule H4-C: _first_poll_per_ticker_hour
+and select_first_qualifying_entries(hourly=True), including the required
+"qualifies only mid-hour" A-vs-C divergence case.
+
 Plus: load_snapshots end-to-end against a tiny synthetic on-disk snapshot
 archive (since/until/direction filtering, plain + dated + gzipped files),
 load_outcomes' DB-then-Gamma-cache fallback, is_open_ended's sentinel
-convention, build_splits, a format_report/evaluate smoke test, and the
-daily_health_report.py (db, today) adapter contract.
+convention, build_splits, a format_report/evaluate smoke test (both rules),
+and the daily_health_report.py (db, today) adapter contract.
 
 All dates are synthetic (2026-11-2x), matching the repo convention of never
 anchoring test fixtures to a real "today".
@@ -27,6 +31,10 @@ import pytest
 from src.scripts.favourite_rule_eval import (
     ENTRY_HI_CENTS,
     ENTRY_LO_CENTS,
+    ENTRY_RULE_BOTH,
+    ENTRY_RULE_EVERY_POLL,
+    ENTRY_RULE_HOURLY,
+    _first_poll_per_ticker_hour,
     ask_band,
     build_splits,
     build_trade_rows,
@@ -116,6 +124,60 @@ class TestSelectFirstQualifyingEntries:
         row = _snap(yes_ask=85, no_ask=15)
         row["ts"] = "not-a-date"
         assert select_first_qualifying_entries([row]) == []
+
+
+# ---------------------------------------------------------------------------
+# Rule H4-C: _first_poll_per_ticker_hour / select_first_qualifying_entries(hourly=True)
+# (issue #1545, "Amended 2026-11-27 (PM)")
+# ---------------------------------------------------------------------------
+
+class TestFirstPollPerTickerHour:
+    def test_keeps_earliest_per_ticker_hour(self):
+        snaps = [
+            _snap(ticker="0xaaa", ts="2026-11-24T05:10:00+00:00"),
+            _snap(ticker="0xaaa", ts="2026-11-24T05:00:00+00:00"),  # earlier, same hour
+            _snap(ticker="0xaaa", ts="2026-11-24T06:05:00+00:00"),  # next hour
+            _snap(ticker="0xbbb", ts="2026-11-24T05:03:00+00:00"),
+        ]
+        reduced = _first_poll_per_ticker_hour(snaps)
+        kept_ts = sorted(r["ts"] for r in reduced)
+        assert kept_ts == [
+            "2026-11-24T05:00:00+00:00", "2026-11-24T05:03:00+00:00", "2026-11-24T06:05:00+00:00",
+        ]
+
+    def test_missing_ticker_or_ts_dropped(self):
+        row = _snap()
+        del row["ticker"]
+        assert _first_poll_per_ticker_hour([row]) == []
+
+
+class TestHourlyRuleCDivergesFromRuleA:
+    def test_mid_hour_only_qualifying_poll_selected_by_a_not_c(self):
+        # Top-of-hour poll (05:00) does NOT qualify; a mid-hour poll (05:30)
+        # does -- A (every poll eligible) picks it. C only ever considers
+        # each hour's top-of-hour poll, so it skips straight to the NEXT
+        # hour's top-of-hour qualifying poll (06:00).
+        snaps = [
+            _snap(ts="2026-11-24T05:00:00+00:00", yes_ask=50, no_ask=50),
+            _snap(ts="2026-11-24T05:30:00+00:00", yes_ask=85, no_ask=15),
+            _snap(ts="2026-11-24T06:00:00+00:00", yes_ask=90, no_ask=10),
+        ]
+        entries_a = select_first_qualifying_entries(snaps, hourly=False)
+        entries_c = select_first_qualifying_entries(snaps, hourly=True)
+
+        assert len(entries_a) == 1
+        assert entries_a[0]["ts"] == "2026-11-24T05:30:00+00:00"
+        assert entries_a[0]["ask_cents"] == 85
+
+        assert len(entries_c) == 1
+        assert entries_c[0]["ts"] == "2026-11-24T06:00:00+00:00"
+        assert entries_c[0]["ask_cents"] == 90
+
+    def test_top_of_hour_qualifying_poll_agrees_for_both_rules(self):
+        snaps = [_snap(ts="2026-11-24T05:00:00+00:00", yes_ask=85, no_ask=15)]
+        entries_a = select_first_qualifying_entries(snaps, hourly=False)
+        entries_c = select_first_qualifying_entries(snaps, hourly=True)
+        assert entries_a == entries_c
 
 
 # ---------------------------------------------------------------------------
@@ -293,6 +355,28 @@ class TestLoadSnapshots:
         base = tmp_path / "does_not_exist" / "snapshots.jsonl"
         assert load_snapshots(base=base) == []
 
+    def test_out_of_range_dated_file_never_read(self, tmp_path):
+        # Adversarial fixture: the file's OWN rotation date (2026-01-01, way
+        # outside [since, until)) disagrees with the row's ts field (claims
+        # to be in range). File-level pruning trusts the filename, so this
+        # row must be excluded even though a per-row-only filter would have
+        # kept it -- this is what distinguishes file-level pruning from the
+        # (already-tested) per-row ts filter above.
+        base = tmp_path / "snapshots.jsonl"
+        stale = tmp_path / "snapshots.2026-01-01.jsonl"
+        stale.write_text(
+            json.dumps(_snap(ticker="0xmislabeled", ts="2026-11-24T05:00:00+00:00")) + "\n"
+        )
+        in_range = tmp_path / "snapshots.2026-11-24.jsonl"
+        in_range.write_text(
+            json.dumps(_snap(ticker="0xok", ts="2026-11-24T06:00:00+00:00")) + "\n"
+        )
+
+        rows = load_snapshots(
+            since="2026-11-24T00:00:00+00:00", until="2026-11-25T00:00:00+00:00", base=base,
+        )
+        assert {r["ticker"] for r in rows} == {"0xok"}
+
 
 # ---------------------------------------------------------------------------
 # load_outcomes (DB -> Gamma-cache fallback)
@@ -336,7 +420,7 @@ class TestLoadOutcomes:
 # ---------------------------------------------------------------------------
 
 class TestEvaluateEndToEnd:
-    def test_evaluate_and_format_report(self, tmp_path):
+    def test_evaluate_and_format_report_both_rules(self, tmp_path):
         base = tmp_path / "snapshots.jsonl"
         rows = [
             _snap(ticker="0xwin", ts="2026-11-24T05:00:00+00:00", station="KORD",
@@ -358,22 +442,47 @@ class TestEvaluateEndToEnd:
             gamma_cache_path=cache_path,
             n_resamples=200,
         )
-        assert result["n_entries"] == 3
-        assert result["n_resolved"] == 2
-        assert result["mean_roi"] is not None
-        assert result["n_days"] == 1  # only the 2 resolved rows share settlement_date 2026-11-24
-        assert result["markets_per_day"] == pytest.approx(2.0)
+        assert result["entry_rule"] == ENTRY_RULE_BOTH
+        assert set(result["rules"]) == {ENTRY_RULE_EVERY_POLL, ENTRY_RULE_HOURLY}
+
+        # Every poll in this fixture is already its own top-of-hour poll, so
+        # A and C agree here -- the divergence case lives in
+        # TestHourlyRuleCDivergesFromRuleA above.
+        for rk in (ENTRY_RULE_EVERY_POLL, ENTRY_RULE_HOURLY):
+            r = result["rules"][rk]
+            assert r["n_entries"] == 3
+            assert r["n_resolved"] == 2
+            assert r["mean_roi"] is not None
+            assert r["n_days"] == 1  # only the 2 resolved rows share settlement_date 2026-11-24
+            assert r["markets_per_day"] == pytest.approx(2.0)
+
+        assert result["rules"][ENTRY_RULE_EVERY_POLL]["label"] == "A"
+        assert result["rules"][ENTRY_RULE_HOURLY]["label"] == "C"
 
         report = format_report(result)
-        assert "n entries (qualifying, incl. unresolved): 3" in report
-        assert "n resolved (scored): 2" in report
-        assert "Splits:" in report
+        assert "[Rule A]" in report and "[Rule C]" in report
+        assert report.count("n entries (qualifying, incl. unresolved): 3") == 2
+        assert report.count("n resolved (scored): 2") == 2
+        assert report.count("Splits:") == 2
+
+    def test_evaluate_single_rule_only_returns_that_rule(self, tmp_path):
+        base = tmp_path / "snapshots.jsonl"
+        result = evaluate(
+            db_path=None, snapshot_base=base, gamma_cache_path=tmp_path / "nope.json",
+            entry_rule=ENTRY_RULE_EVERY_POLL,
+        )
+        assert set(result["rules"]) == {ENTRY_RULE_EVERY_POLL}
+
+    def test_evaluate_rejects_unknown_entry_rule(self, tmp_path):
+        with pytest.raises(ValueError):
+            evaluate(snapshot_base=tmp_path / "snapshots.jsonl", entry_rule="bogus")
 
     def test_evaluate_no_data_is_graceful(self, tmp_path):
         base = tmp_path / "snapshots.jsonl"
         result = evaluate(db_path=None, snapshot_base=base, gamma_cache_path=tmp_path / "nope.json")
-        assert result["n_entries"] == 0
-        assert result["mean_roi"] is None
+        for r in result["rules"].values():
+            assert r["n_entries"] == 0
+            assert r["mean_roi"] is None
         report = format_report(result)
         assert "no resolved trades yet" in report
 
@@ -382,31 +491,53 @@ class TestEvaluateEndToEnd:
 # section() -- daily_health_report.py adapter
 # ---------------------------------------------------------------------------
 
+def _fake_rule_result(label, n_entries=5, n_resolved=3, mean_roi=0.012,
+                       ci_lo=-0.01, ci_hi=0.03, p5=-0.005):
+    return {
+        "label": label, "n_entries": n_entries, "n_resolved": n_resolved,
+        "mean_roi": mean_roi, "ci_lo": ci_lo, "ci_hi": ci_hi, "p5": p5,
+        "n_days": 1, "markets_per_day": 1.0, "eur_per_day_at_5": 0.1, "splits": {},
+    }
+
+
 class TestSectionAdapter:
-    def test_section_returns_lines_and_flags_tuple(self, monkeypatch):
+    def test_section_returns_lines_and_flags_tuple_both_rules(self, monkeypatch):
         def _fake_evaluate(**kwargs):
             return {
-                "n_entries": 5, "n_resolved": 3, "mean_roi": 0.012,
-                "ci_lo": -0.01, "ci_hi": 0.03, "p5": -0.005,
                 "checkpoint_n": 2000,
+                "rules": {
+                    ENTRY_RULE_EVERY_POLL: _fake_rule_result("A"),
+                    ENTRY_RULE_HOURLY: _fake_rule_result("C", n_resolved=2, mean_roi=0.02),
+                },
             }
         monkeypatch.setattr("src.scripts.favourite_rule_eval.evaluate", _fake_evaluate)
         lines, flags = section(db=None, today=None)
         assert flags == {}
         text = "\n".join(lines)
         assert "H4 Favourite Rule Forward Test" in text
-        assert "n=3/2000" in text
-        assert "mean ROI +1.20%" in text
+        assert "[Rule A] n=3/2000" in text
+        assert "[Rule A] mean ROI +1.20%" in text
+        assert "[Rule C] n=2/2000" in text
+        assert "[Rule C] mean ROI +2.00%" in text
 
     def test_section_handles_no_resolved_trades(self, monkeypatch):
         def _fake_evaluate(**kwargs):
             return {
-                "n_entries": 0, "n_resolved": 0, "mean_roi": None,
-                "ci_lo": None, "ci_hi": None, "p5": None, "checkpoint_n": 2000,
+                "checkpoint_n": 2000,
+                "rules": {
+                    ENTRY_RULE_EVERY_POLL: _fake_rule_result(
+                        "A", n_entries=0, n_resolved=0, mean_roi=None, ci_lo=None, ci_hi=None, p5=None,
+                    ),
+                    ENTRY_RULE_HOURLY: _fake_rule_result(
+                        "C", n_entries=0, n_resolved=0, mean_roi=None, ci_lo=None, ci_hi=None, p5=None,
+                    ),
+                },
             }
         monkeypatch.setattr("src.scripts.favourite_rule_eval.evaluate", _fake_evaluate)
         lines, _flags = section(db=None, today=None)
-        assert "No resolved H4 entries yet." in "\n".join(lines)
+        text = "\n".join(lines)
+        assert "[Rule A] No resolved entries yet." in text
+        assert "[Rule C] No resolved entries yet." in text
 
     def test_section_degrades_gracefully_on_error(self, monkeypatch):
         def _boom(**kwargs):
