@@ -1431,11 +1431,133 @@ def _build_1507_package_status(db, today: datetime) -> list[str]:
             title="#1507 Package Test -- Per-Station Breakdown",
         ))
 
+        # Issue #1543: descriptive split of the SAME same-day population by
+        # whether the market's own date (new `market_date` column, NULL for
+        # rows written before this issue/unbackfilled) agrees with the
+        # station-local calendar day the row was entered on. Purely
+        # descriptive -- never changes the n/checkpoint counters, the
+        # is_next_day population, or any gate/probability above. Guarded in
+        # its own try/except so a DB without the `market_date` column (or
+        # any other failure here) degrades only this block, not the whole
+        # #1507 section.
+        lines.extend(_build_1543_market_date_split(db, since))
+
     except Exception:
         log.exception("#1507 package-status query failed")
         lines.append("  (unavailable -- query error)")
         lines.append("")
     return lines
+
+
+def _build_1543_market_date_split(db, since: str) -> list[str]:
+    """Descriptive true-market-date split for ``_build_1507_package_status``
+    (issue #1543) -- see that function's call site for why this must never
+    change its n/checkpoint counters.
+
+    Buckets the same same-day shadow population (``mode='shadow'``,
+    ``direction='high'``, ``ts >= since``, ``COALESCE(is_next_day, 0) = 0``)
+    into:
+        - "true same-day": market_date == the station-local calendar date
+          the row was entered on.
+        - "next local day (UTC-evening)": market_date == that local date + 1
+          day -- an evening western-hemisphere entry that is UTC-same-day
+          but settles on the station's next local day (the #1543 bug).
+        - "unknown": market_date is NULL (not yet backfilled) or the
+          station has no known timezone.
+    """
+    lines = ["  By true market date (issue #1543):"]
+    try:
+        import pytz
+        from dateutil import parser as dtparse
+
+        from src.config import STATION_TZ
+
+        rows = db._conn.execute(
+            "SELECT station, ts, market_date, outcome, pnl, actual_price "
+            "FROM trades WHERE mode='shadow' AND direction='high' "
+            "AND ts >= ? AND COALESCE(is_next_day, 0) = 0",
+            (since,),
+        ).fetchall()
+
+        buckets: dict = {
+            "true same-day": [],
+            "next local day (UTC-evening)": [],
+            "unknown": [],
+        }
+        for station, ts, market_date, outcome, pnl, actual_price in rows:
+            item = (outcome, pnl, actual_price)
+            if not market_date:
+                buckets["unknown"].append(item)
+                continue
+            try:
+                md = date.fromisoformat(str(market_date)[:10])
+            except ValueError:
+                buckets["unknown"].append(item)
+                continue
+            tz_name = STATION_TZ.get(station)
+            if tz_name is None:
+                buckets["unknown"].append(item)
+                continue
+            try:
+                t = dtparse.parse(ts)
+                if t.tzinfo is None:
+                    t = t.replace(tzinfo=pytz.UTC)
+                local_date = t.astimezone(pytz.timezone(tz_name)).date()
+            except (ValueError, OverflowError):
+                buckets["unknown"].append(item)
+                continue
+
+            if md == local_date:
+                buckets["true same-day"].append(item)
+            elif md == local_date + timedelta(days=1):
+                buckets["next local day (UTC-evening)"].append(item)
+            else:
+                buckets["unknown"].append(item)
+
+        for label in ("true same-day", "next local day (UTC-evening)", "unknown"):
+            items = buckets[label]
+            n = len(items)
+            settled_items = [it for it in items if it[0] is not None]
+            settled = len(settled_items)
+            wins = sum(1 for _, pnl, _ in settled_items if (pnl or 0) > 0)
+            losses = sum(1 for _, pnl, _ in settled_items if (pnl or 0) < 0)
+            pnl_sum = sum(pnl or 0.0 for _, pnl, _ in settled_items)
+            prices = [ap for _, _, ap in settled_items if ap is not None]
+            avg_price = (sum(prices) / len(prices)) if prices else None
+            row = (n, settled, wins, losses, pnl_sum, avg_price)
+            lines.extend(_format_1507_emit(label, row))
+        lines.append("")
+    except Exception:
+        log.exception("#1543 market-date split query failed")
+        lines.append("  (unavailable -- query error)")
+        lines.append("")
+    return lines
+
+
+def _format_1507_emit(label: str, row, indent: str = "    ") -> list[str]:
+    """Same formatting as the ``_emit`` closure inside
+    ``_build_1507_package_status``, factored out so
+    ``_build_1543_market_date_split`` can reuse it without reaching into a
+    closure. Keep both in sync if the display format changes.
+    """
+    n, settled, wins, losses, pnl, avg_price = row
+    n = n or 0
+    settled = settled or 0
+    wins = wins or 0
+    losses = losses or 0
+    pnl = pnl or 0.0
+    pending = n - settled
+    wr = (wins / (wins + losses)) if (wins or losses) else None
+    breakeven = (avg_price / 100.0) if avg_price is not None else None
+    pnl_display = pnl if settled else None
+    avg_pnl = (pnl / settled) if settled else None
+    return [
+        f"{indent}{label}: {n} trades, {settled} settled "
+        f"({pending} pending), win% {_fmt_pct(wr)} "
+        f"(breakeven {_fmt_pct(breakeven)}) ({wins}W/{losses}L)",
+        f"{indent}  PnL: sum {_fmt_pnl_contract(pnl_display)}, "
+        f"avg {_fmt_pnl_contract(avg_pnl)}",
+    ]
 
 
 def _build_station_breakdown(
