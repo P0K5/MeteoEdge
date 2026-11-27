@@ -55,6 +55,7 @@ if str(_HERE.parents[1]) not in sys.path:
 
 from src.logging_config import setup_logging  # noqa: E402
 from src.data.log_error_classes import section as _build_log_errors  # noqa: E402
+from src.scripts.favourite_rule_eval import section as _build_favourite_rule_status  # noqa: E402
 
 #: Start of the M3 clean-data collection window, and the date station-days are
 #: counted from. This has moved TWICE as probability defects landed mid-window
@@ -2092,6 +2093,7 @@ def build_report(db) -> str:
         ("param_change", _build_param_change_impact),
         ("package_1507", _build_1507_package_status),
         ("stations", _build_station_breakdown),
+        ("favourite_rule_h4", _build_favourite_rule_status),
     ]:
         try:
             result = builder(db, today)
