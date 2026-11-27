@@ -483,6 +483,15 @@ class Candidate:
     # candidates (is_next_day=False). Never used to gate or alter the live
     # entry decision.
     today_position_open: bool = field(default=False)
+    # The market's own settlement date (YYYY-MM-DD), issue #1543 -- always
+    # ``_decision_date`` (the market's end_dt.date()), which is already
+    # correct on every path: same-day, next-day evaluation (issue #687), and
+    # the #820 day-mismatch evening path. Exists because `is_next_day` is a
+    # UTC-day label that silently mislabels evening western-hemisphere
+    # entries as "same-day" when the market itself settles on the station's
+    # next local day -- this field records the truth without changing
+    # `is_next_day`, any gate, or any probability. Purely descriptive.
+    market_date: "str | None" = field(default=None)
 
 
 def no_entry_margin_gap(
@@ -1128,6 +1137,7 @@ def scan_markets(
                         p_yes_raw=raw_p_yes, ev_yes_raw=ev_yes_raw, ev_no_raw=ev_no_raw,
                         is_next_day=is_next_day_eval,
                         today_position_open=_next_day_today_position_open,
+                        market_date=_decision_date,
                     )
                     if _day_mismatch:
                         gate_verdict = "day_mismatch_shadow"
@@ -1195,6 +1205,7 @@ def scan_markets(
                         p_yes_raw=raw_p_yes, ev_yes_raw=ev_yes_raw, ev_no_raw=ev_no_raw,
                         is_next_day=is_next_day_eval,
                         today_position_open=_next_day_today_position_open,
+                        market_date=_decision_date,
                     )
                     if _day_mismatch:
                         gate_verdict = "day_mismatch_shadow"

@@ -33,6 +33,7 @@ from src.scripts.daily_health_report import (
     TABLE_LIVENESS_QUIET_OK,  # noqa: E402
     TABLE_LIVENESS_SPECS,  # noqa: E402
     _build_1507_package_status,
+    _build_1543_market_date_split,
     _build_bot_health,
     _build_connectivity_watchdog,
     _build_emos_progress,
@@ -1783,7 +1784,7 @@ def _shadow_trades_db(rows):
     conn.execute(
         "CREATE TABLE trades (ts TEXT, station TEXT, mode TEXT, direction TEXT, "
         "side TEXT, outcome TEXT, pnl REAL, actual_price INTEGER, p_yes_raw REAL, "
-        "is_next_day INTEGER NOT NULL DEFAULT 0)"
+        "is_next_day INTEGER NOT NULL DEFAULT 0, market_date TEXT)"
     )
     conn.execute(
         "CREATE TABLE emos_calibration (city TEXT, model_mode TEXT, "
@@ -1795,7 +1796,8 @@ def _shadow_trades_db(rows):
     for r in rows:
         conn.execute(
             "INSERT INTO trades (ts, station, mode, direction, side, outcome, "
-            "pnl, actual_price, p_yes_raw, is_next_day) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "pnl, actual_price, p_yes_raw, is_next_day, market_date) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (
                 r.get("ts", "2026-10-12T00:00:00+00:00"),
                 r.get("station", "KORD"),
@@ -1807,6 +1809,7 @@ def _shadow_trades_db(rows):
                 r.get("actual_price", 76),
                 r.get("p_yes_raw", 0.03),
                 r.get("is_next_day", 0),
+                r.get("market_date"),
             ),
         )
     conn.commit()
@@ -2092,3 +2095,84 @@ class TestBuild1507PackageStatus:
         assert result.index("Entry-Gate Widening Experiment") < \
             result.index("#1507 Package Test Status") < \
             result.index("Per-Station Breakdown")
+
+
+# ---------------------------------------------------------------------------
+# #1543 true-market-date descriptive split (inside #1507's package status)
+# ---------------------------------------------------------------------------
+
+#: 00:00 UTC on 2026-11-11 -- KORD (America/Chicago, CST by this date) is
+#: still 2026-11-10 18:00 local, i.e. local calendar date 2026-11-10.
+_EVENING_UTC_TS = "2026-11-11T00:00:00+00:00"
+
+
+class TestMarketDateSplit1543:
+    def test_true_same_day_bucket(self):
+        db = _shadow_trades_db([
+            {"ts": _EVENING_UTC_TS, "station": "KORD", "is_next_day": 0,
+             "market_date": "2026-11-10", "outcome": "win", "pnl": 0.24},
+        ])
+        text = "\n".join(_build_1543_market_date_split(db, ISSUE_1507_T0))
+        block = text.split("true same-day:")[1].split("next local day")[0]
+        assert "1 trades, 1 settled" in block
+        assert "sum +0.24/contract" in block
+
+    def test_next_local_day_bucket(self):
+        db = _shadow_trades_db([
+            {"ts": _EVENING_UTC_TS, "station": "KORD", "is_next_day": 0,
+             "market_date": "2026-11-11", "outcome": "loss", "pnl": -0.76},
+        ])
+        text = "\n".join(_build_1543_market_date_split(db, ISSUE_1507_T0))
+        block = text.split("next local day (UTC-evening):")[1].split("unknown:")[0]
+        assert "1 trades, 1 settled" in block
+        assert "sum -0.76/contract" in block
+
+    def test_unknown_bucket_for_null_market_date(self):
+        db = _shadow_trades_db([
+            {"ts": _EVENING_UTC_TS, "station": "KORD", "is_next_day": 0,
+             "market_date": None, "outcome": None, "pnl": None},
+        ])
+        text = "\n".join(_build_1543_market_date_split(db, ISSUE_1507_T0))
+        block = text.split("unknown:")[1]
+        assert "1 trades, 0 settled" in block
+
+    def test_buckets_partition_the_population(self):
+        """Every row in the same-day population lands in exactly one
+        bucket -- the three bucket counts sum to the overall n."""
+        db = _shadow_trades_db([
+            {"ts": _EVENING_UTC_TS, "station": "KORD", "is_next_day": 0,
+             "market_date": "2026-11-10", "outcome": "win", "pnl": 0.24},
+            {"ts": _EVENING_UTC_TS, "station": "KORD", "is_next_day": 0,
+             "market_date": "2026-11-11", "outcome": "loss", "pnl": -0.76},
+            {"ts": _EVENING_UTC_TS, "station": "KORD", "is_next_day": 0,
+             "market_date": None, "outcome": None, "pnl": None},
+        ])
+        text = "\n".join(_build_1543_market_date_split(db, ISSUE_1507_T0))
+        assert "true same-day: 1 trades" in text
+        assert "next local day (UTC-evening): 1 trades" in text
+        assert "unknown: 1 trades" in text
+
+    def test_rendered_inside_1507_package_status_without_changing_counters(self):
+        """The split appears inside the #1507 section, and the existing
+        n/checkpoint counters above it are completely unaffected (issue
+        #1543's hard constraint)."""
+        db = _shadow_trades_db([
+            {"ts": _AFTER_T0, "station": "KORD", "is_next_day": 0,
+             "market_date": "2026-11-10", "outcome": "win", "pnl": 0.24},
+        ])
+        text = "\n".join(_build_1507_package_status(db, datetime.now(timezone.utc)))
+        assert "n=1/150 toward the futility check, 1/400 toward final" in text
+        assert "By true market date (issue #1543):" in text
+        assert "true same-day: 1 trades, 1 settled" in text
+
+    def test_query_error_degrades_only_this_block(self):
+        """A DB missing the market_date column (pre-migration) must not
+        break the rest of #1507's section -- only this block degrades."""
+        db = _shadow_trades_db([
+            {"ts": _AFTER_T0, "is_next_day": 0, "outcome": "win", "pnl": 0.24},
+        ])
+        db._conn.execute("ALTER TABLE trades RENAME COLUMN market_date TO moved_away")
+        text = "\n".join(_build_1507_package_status(db, datetime.now(timezone.utc)))
+        assert "n=1/150 toward the futility check, 1/400 toward final" in text
+        assert "By true market date (issue #1543):" in text
+        assert "(unavailable -- query error)" in text

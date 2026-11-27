@@ -1,9 +1,9 @@
-"""Regression test for issue #1471.
+"""Regression test for issue #1471 (and issue #1543's market_date column).
 
 The 'shadow' CHECK-upgrade rebuild of ``trades`` in ``Database._migrate`` runs
 after the ADD COLUMN migrations, so a pre-'shadow' DB that already carries
 close_reason / minutes_to_settlement_at_close / bid_depth_at_close /
-is_next_day must keep that data across the rebuild.
+is_next_day / market_date must keep that data across the rebuild.
 """
 import sqlite3
 
@@ -24,7 +24,8 @@ CREATE TABLE trades (
     close_reason TEXT, minutes_to_settlement_at_close REAL,
     bid_depth_at_close INTEGER,
     direction TEXT NOT NULL DEFAULT 'high', p_yes_raw REAL, end_date TEXT,
-    is_next_day INTEGER NOT NULL DEFAULT 0
+    is_next_day INTEGER NOT NULL DEFAULT 0,
+    market_date TEXT
 )
 """
 
@@ -40,8 +41,8 @@ def test_shadow_rebuild_preserves_close_and_next_day_columns(tmp_path):
         "INSERT INTO trades (ts,station,ticker,bracket_low,bracket_high,side,"
         "predicted_price,actual_price,predicted_edge,mode,capital_before,"
         "close_reason,minutes_to_settlement_at_close,bid_depth_at_close,"
-        "is_next_day) VALUES ('2025-01-01T00:00:00+00:00','KORD','T',75,77,"
-        "'NO',10,12,5.0,'live',100.0,'stop_loss',42.5,7,1)"
+        "is_next_day,market_date) VALUES ('2025-01-01T00:00:00+00:00','KORD','T',75,77,"
+        "'NO',10,12,5.0,'live',100.0,'stop_loss',42.5,7,1,'2025-01-01')"
     )
     conn.commit()
     conn.close()
@@ -52,6 +53,7 @@ def test_shadow_rebuild_preserves_close_and_next_day_columns(tmp_path):
     assert row["minutes_to_settlement_at_close"] == 42.5
     assert row["bid_depth_at_close"] == 7
     assert row["is_next_day"] == 1
+    assert row["market_date"] == "2025-01-01"
     # Assert the restored indexes' actual definitions, not just their names --
     # IF NOT EXISTS would silently no-op against a same-named index left with
     # a stale definition from a different code path.

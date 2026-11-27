@@ -193,7 +193,8 @@ CREATE TABLE IF NOT EXISTS candidates (
     flagged_first   INTEGER NOT NULL DEFAULT 1,
     direction       TEXT NOT NULL DEFAULT 'high',
     is_next_day     INTEGER NOT NULL DEFAULT 0,
-    today_position_open INTEGER NOT NULL DEFAULT 0
+    today_position_open INTEGER NOT NULL DEFAULT 0,
+    market_date     TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_cand_station_ts ON candidates(station, ts);
 CREATE INDEX IF NOT EXISTS idx_cand_ticker ON candidates(ticker);
@@ -218,7 +219,8 @@ CREATE TABLE IF NOT EXISTS trades (
     capital_after   REAL,
     settled_at      TEXT,
     direction       TEXT NOT NULL DEFAULT 'high',
-    is_next_day     INTEGER NOT NULL DEFAULT 0
+    is_next_day     INTEGER NOT NULL DEFAULT 0,
+    market_date     TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_trades_station_ts ON trades(station, ts);
 CREATE INDEX IF NOT EXISTS idx_trades_mode ON trades(mode);
@@ -989,6 +991,23 @@ class Database:
                 ("copy_live_positions", "stuck_level", "INTEGER NOT NULL DEFAULT 0"),
                 ("copy_live_positions", "stuck_category", "TEXT"),
                 ("copy_live_positions", "stuck_first_seen_at", "TEXT"),
+                # Issue #1543: the market's own settlement date (YYYY-MM-DD),
+                # set from scanner.py's `_decision_date` -- the market's
+                # end_dt.date(), which is already correct on every candidate
+                # path (same-day, next-day eval, and the #820 day-mismatch
+                # evening path). This is additive telemetry only: it exists
+                # because `is_next_day` (a UTC-day label) silently mislabels
+                # evening western-hemisphere entries as "same-day" when the
+                # market itself settles on the station's *next* local day --
+                # see the issue for the audited magnitude. NULL for every row
+                # written before this migration; backfilled from
+                # scan_decisions (primary) or Gamma (fallback) by
+                # src/scripts/backfill_trade_market_date.py. Never read by any
+                # gate, probability, or `is_next_day` computation -- the #1507
+                # pre-registered test's population is defined by `is_next_day`
+                # alone and must not shift mid-test.
+                ("candidates", "market_date", "TEXT"),
+                ("trades", "market_date", "TEXT"),
             ]:
                 try:
                     self._conn.execute(
@@ -1202,6 +1221,15 @@ class Database:
                 is_next_day_expr = (
                     "is_next_day" if "is_next_day" in old_col_names else "0"
                 )
+                # Issue #1543: same carry-over rationale as is_next_day_expr
+                # above -- the generic ADD COLUMN loop runs before this
+                # rebuild and will already have added market_date in
+                # practice, but this expr keeps the rebuild correct even if
+                # that ordering ever changes, and matches the defensive
+                # pattern already used for every other nullable column here.
+                market_date_expr = (
+                    "market_date" if "market_date" in old_col_names else "NULL"
+                )
                 self._rebuild_trades_table(
                     column_defs="""
                         id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1230,14 +1258,16 @@ class Database:
                         direction       TEXT NOT NULL DEFAULT 'high',
                         p_yes_raw       REAL,
                         end_date        TEXT,
-                        is_next_day     INTEGER NOT NULL DEFAULT 0
+                        is_next_day     INTEGER NOT NULL DEFAULT 0,
+                        market_date     TEXT
                     """,
                     select_columns=(
                         "id,ts,station,ticker,bracket_low,bracket_high,side,"
                         "predicted_price,actual_price,slippage,predicted_edge,mode,"
                         "order_id,outcome,pnl,capital_before,capital_after,settled_at,"
                         f"{fee_expr},size_eur,{close_reason_expr},{mtsc_expr},{bid_depth_expr},"
-                        f"{direction_expr},{p_yes_raw_expr},{end_date_expr},{is_next_day_expr}"
+                        f"{direction_expr},{p_yes_raw_expr},{end_date_expr},{is_next_day_expr},"
+                        f"{market_date_expr}"
                     ),
                 )
                 # _rebuild_trades_table (see its docstring) only restores
@@ -1379,6 +1409,13 @@ class Database:
                         "WHERE estimated_fee_cents IS NULL AND actual_fee_cents IS NOT NULL"
                     )
                     # Now rebuild the table to drop actual_fee_cents
+                    # Issue #1543: carry market_date through this rebuild too
+                    # (same rationale as the mode-CHECK rebuild above) --
+                    # NULL fallback if an even older DB somehow reaches this
+                    # branch without it having been added yet.
+                    market_date_expr = (
+                        "market_date" if "market_date" in old_cols else "NULL"
+                    )
                     self._rebuild_trades_table(
                         column_defs="""
                             id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1407,14 +1444,16 @@ class Database:
                             direction       TEXT NOT NULL DEFAULT 'high',
                             p_yes_raw       REAL,
                             end_date        TEXT,
-                            is_next_day     INTEGER NOT NULL DEFAULT 0
+                            is_next_day     INTEGER NOT NULL DEFAULT 0,
+                            market_date     TEXT
                         """,
                         select_columns=(
                             "id,ts,station,ticker,bracket_low,bracket_high,side,"
                             "predicted_price,actual_price,slippage,predicted_edge,mode,"
                             "order_id,outcome,pnl,capital_before,capital_after,settled_at,"
                             "estimated_fee_cents,size_eur,close_reason,minutes_to_settlement_at_close,"
-                            "bid_depth_at_close,direction,p_yes_raw,end_date,is_next_day"
+                            f"bid_depth_at_close,direction,p_yes_raw,end_date,is_next_day,"
+                            f"{market_date_expr}"
                         ),
                     )
                 else:
@@ -1791,6 +1830,7 @@ class Database:
         p_yes_raw: "float | None" = None,
         is_next_day: int = 0,
         today_position_open: int = 0,
+        market_date: "str | None" = None,
     ) -> int:
         """Insert a trade candidate; returns the new row id.
 
@@ -1805,6 +1845,10 @@ class Database:
                 pass 0 (there is no "today position" concept relative to a
                 same-day candidate). Read-only telemetry: never gates or
                 alters the live entry decision.
+            market_date: the market's own settlement date (YYYY-MM-DD),
+                issue #1543 -- see the ``market_date`` migration comment in
+                ``_DDL``'s ALTER TABLE list for the full rationale. Purely
+                descriptive; never read by any gate or probability.
         """
         with self._lock:
             cur = self._conn.execute(
@@ -1812,13 +1856,13 @@ class Database:
                 "(ts,station,ticker,bracket_low,bracket_high,side,"
                 "predicted_price,predicted_edge,market_price,confidence,"
                 "minutes_to_settlement,flagged_first,direction,p_yes_raw,is_next_day,"
-                "today_position_open) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "today_position_open,market_date) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     ts, station, ticker, bracket_low, bracket_high, side,
                     predicted_price, predicted_edge, market_price, confidence,
                     minutes_to_settlement, flagged_first, direction, p_yes_raw,
-                    int(is_next_day), int(today_position_open),
+                    int(is_next_day), int(today_position_open), market_date,
                 ),
             )
             self._conn.commit()
@@ -2467,6 +2511,7 @@ class Database:
         direction: str = "high",
         p_yes_raw: "float | None" = None,
         is_next_day: int = 0,
+        market_date: "str | None" = None,
     ) -> tuple[int, bool]:
         """Insert a shadow trade row, or update actual_price if one already exists today.
 
@@ -2482,6 +2527,11 @@ class Database:
                 does for p_yes_raw), since the dedup key does not include
                 is_next_day and an existing row's classification should not
                 change underneath it.
+            market_date: the market's own settlement date (YYYY-MM-DD),
+                issue #1543 -- mirrors Candidate.market_date. Only used on
+                insert, same rationale as is_next_day above: the dedup key
+                does not include it, and a market's own date can't change
+                underneath an existing row.
 
         Returns (row_id, created) where created=True means a new row was inserted,
         False means an existing row's actual_price was updated.
@@ -2509,13 +2559,13 @@ class Database:
                 "(ts,station,ticker,bracket_low,bracket_high,side,"
                 "predicted_price,actual_price,slippage,predicted_edge,mode,order_id,"
                 "outcome,pnl,capital_before,capital_after,settled_at,direction,p_yes_raw,"
-                "is_next_day) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "is_next_day,market_date) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     ts, station, ticker, bracket_low, bracket_high, side,
                     predicted_price, actual_price, None, predicted_edge, "shadow",
                     None, None, None, capital_before, None, None, direction, p_yes_raw,
-                    int(is_next_day),
+                    int(is_next_day), market_date,
                 ),
             )
             self._conn.commit()

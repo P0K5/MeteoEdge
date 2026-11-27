@@ -1300,3 +1300,87 @@ class TestNextDayEvaluation:
             assert snap["emos_mode"] in ("legacy", "emos_shadow", "emos_primary"), (
                 f"emos_mode must be a valid model mode; got '{snap['emos_mode']}'"
             )
+
+
+# ---------------------------------------------------------------------------
+# Candidate.market_date (issue #1543)
+# ---------------------------------------------------------------------------
+
+class TestCandidateMarketDate1543:
+    """Candidate.market_date always carries the market's own settlement date
+    (`_decision_date`), independent of the `is_next_day`/day-mismatch
+    routing -- see the three same-day/next-day/day-mismatch paths below.
+    Purely additive: no assertion here touches is_next_day, any gate, or any
+    probability.
+    """
+
+    def _miami_market(self, group_title: str, outcome_prices: str,
+                       end_dt: datetime, condition_id: str) -> dict:
+        return _market(
+            group_title=group_title,
+            question=f"Will the highest temperature in Miami be {group_title}?",
+            condition_id=condition_id,
+        ) | {"endDate": end_dt.isoformat(), "outcomePrices": outcome_prices}
+
+    def test_same_day_candidate_market_date_is_todays_utc_date(self):
+        import dataclasses
+        state = dataclasses.replace(
+            _state(forecast=80.0, current=75.0),
+            now_local=_state(forecast=80.0, current=75.0).sunset_local + timedelta(minutes=30),
+        )
+        today = datetime.now(timezone.utc).date()
+        end_dt = datetime(today.year, today.month, today.day, 23, 59, 59, tzinfo=timezone.utc)
+        market = self._miami_market("65-95°F", '["0.80","0.20"]', end_dt, "0x1543same")
+
+        with patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0), \
+                patch("src.strategy.scanner.MODEL_PROB_CAP", 1.0):
+            candidates, _ = scan_markets({"KMIA": state}, [market])
+
+        assert len(candidates) == 1
+        assert candidates[0].is_next_day is False
+        assert candidates[0].market_date == today.isoformat()
+
+    def test_next_day_candidate_market_date_is_markets_future_date(self, monkeypatch):
+        monkeypatch.setenv("NEXT_DAY_EVALUATION", "true")
+        weather = {"KMIA": WeatherState(
+            station="KMIA", now_local=_FROZEN_NOW,
+            sunset_local=_FROZEN_NOW.replace(hour=20),
+            current_high_f=75.0, current_high_time=_FROZEN_NOW,
+            latest_temp_f=72.0, latest_temp_time=_FROZEN_NOW,
+            forecast_high_f=80.0,
+        )}
+        tomorrow = datetime.now(timezone.utc) + timedelta(days=1, hours=6)
+        market = self._miami_market("76-88°F", '["0.75","0.25"]', tomorrow, "0x1543nextday")
+
+        with patch("src.strategy.scanner._fetch_next_day_forecast", return_value=(82.0, 3.0)):
+            candidates, _ = scan_markets(weather, [market])
+
+        assert len(candidates) == 1
+        assert candidates[0].is_next_day is True
+        assert candidates[0].market_date == tomorrow.date().isoformat()
+
+    def test_day_mismatch_candidate_market_date_is_markets_date_not_local_entry_date(self):
+        """#820 day-mismatch: state.now_local is 'yesterday' local, market
+        settles on today's UTC date. market_date must track the market's own
+        date (today), NOT state.now_local's date (yesterday) -- that
+        disagreement is exactly the next-local-day case issue #1543 records.
+        """
+        import dataclasses
+        yesterday = datetime.now(timezone.utc) - timedelta(days=1)
+        state = dataclasses.replace(
+            _state(forecast=85.0, current=88.0),
+            now_local=yesterday.replace(hour=20, minute=30),
+            sunset_local=yesterday.replace(hour=20),
+        )
+        today = datetime.now(timezone.utc).date()
+        end_dt = datetime(today.year, today.month, today.day, 23, 59, 59, tzinfo=timezone.utc)
+        market = self._miami_market("72-74°F", '["0.20","0.80"]', end_dt, "0x1543mismatch")
+
+        with patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0), \
+                patch("src.strategy.scanner.MODEL_PROB_CAP", 1.0):
+            candidates, _ = scan_markets({"KMIA": state}, [market])
+
+        assert len(candidates) == 1
+        assert candidates[0].shadow is True
+        assert candidates[0].market_date == today.isoformat()
+        assert candidates[0].market_date != state.now_local.date().isoformat()
